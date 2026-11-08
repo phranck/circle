@@ -34,7 +34,11 @@
 /* This option switches f_mkfs(). (0:Disable or 1:Enable) */
 
 
+/* The build may override this option. It must be consistent in every
+/  component that shares FIL, because the option adds cltbl to it. */
+#ifndef FF_USE_FASTSEEK
 #define FF_USE_FASTSEEK	0
+#endif
 /* This option switches fast seek feature. (0:Disable or 1:Enable) */
 
 
