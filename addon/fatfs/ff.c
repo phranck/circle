@@ -1665,6 +1665,65 @@ static DWORD clmt_clust (	/* <2:Error, >=2:Cluster number */
 	return cl + *tbl;	/* Return the cluster number */
 }
 
+
+
+/*-----------------------------------------------------------------------*/
+/* FAT handling - Link map table of a big file, made as it is opened     */
+/*-----------------------------------------------------------------------*/
+/* A file of `CLMT_MIN_SIZE` or more gets its cluster link map as it is
+/  opened, so that a seek finds its cluster in the map rather than
+/  following the chain from the file's start, a FAT sector at a time. The
+/  map can't grow with the file: it is freed before a write or a seek past
+/  the file's end, and as the file is closed. */
+
+/* The smallest file mapped: 1 MiB. Mapping a smaller file would cost more
+/  memory than its occasional seeks save. A smaller file gets no map, and
+/  a seek in it follows its chain. */
+#define CLMT_MIN_SIZE		((FSIZE_t)1 << 20)
+/* The items a map gets first: `64`, which are its size, two a fragment
+/  and the end, so room for 31 fragments. A file in more fragments gets a
+/  second map of the size `f_lseek()` says it needs. */
+#define CLMT_FIRST_ITEMS	64
+
+/* Frees a file's map; a seek in the file follows its chain from then on. */
+static void free_clmt (
+	FIL* fp		/* Pointer to the file object; one without a map is left as it is */
+)
+{
+	if (fp->cltbl) {
+		ff_memfree(fp->cltbl);
+		fp->cltbl = 0;
+	}
+}
+
+/* Makes the map of a file just opened, in up to two passes. A file
+/  smaller than `CLMT_MIN_SIZE` and one opened to append get none, and a
+/  file whose map finds no memory or can't be made goes without. */
+static void make_clmt (
+	FIL* fp		/* Pointer to the file object just opened, its volume unlocked */
+)
+{
+	DWORD items = CLMT_FIRST_ITEMS;
+	FRESULT res;
+	int pass;
+
+
+	if (fp->obj.objsize < CLMT_MIN_SIZE || (fp->flag & FA_SEEKEND))
+	{
+		return;		/* Small, or opened to append */
+	}
+	for (pass = 0; pass < 2; pass++) {
+		fp->cltbl = (DWORD*)ff_memalloc((UINT)(items * sizeof (DWORD)));
+		if (!fp->cltbl) return;		/* Without the memory the file goes without a map */
+		fp->cltbl[0] = items;
+		res = f_lseek(fp, CREATE_LINKMAP);
+		if (res == FR_OK) return;
+		items = fp->cltbl[0];		/* On `FR_NOT_ENOUGH_CORE` the items it needs */
+		free_clmt(fp);
+		if (res != FR_NOT_ENOUGH_CORE) return;
+	}
+}
+
 #endif	/* FF_USE_FASTSEEK */
 
 
@@ -3988,6 +4047,15 @@ FRESULT f_open (
 
 	if (res != FR_OK) fp->obj.fs = 0;	/* Invalidate file object on error */
 
+#if FF_USE_FASTSEEK
+	if (res == FR_OK) {
+#if FF_FS_REENTRANT
+		unlock_volume(fs, FR_OK);	/* `f_lseek()` locks it again to make the map */
+#endif
+		make_clmt(fp);
+		return FR_OK;
+	}
+#endif
 	LEAVE_FF(fs, res);
 }
 
@@ -4123,6 +4191,12 @@ FRESULT f_write (
 	if ((!FF_FS_EXFAT || fs->fs_type != FS_EXFAT) && (DWORD)(fp->fptr + btw) < (DWORD)fp->fptr) {
 		btw = (UINT)(0xFFFFFFFF - (DWORD)fp->fptr);
 	}
+#if FF_USE_FASTSEEK
+	if (fp->cltbl && fp->fptr + btw > fp->obj.objsize)
+	{
+		free_clmt(fp);	/* The map can't grow with the file */
+	}
+#endif
 
 	for ( ; btw > 0; btw -= wcnt, *bw += wcnt, wbuff += wcnt, fp->fptr += wcnt, fp->obj.objsize = (fp->fptr > fp->obj.objsize) ? fp->fptr : fp->obj.objsize) {	/* Repeat until all data written */
 		if (fp->fptr % SS(fs) == 0) {		/* On the sector boundary? */
@@ -4326,6 +4400,9 @@ FRESULT f_close (
 #endif
 		}
 	}
+#if FF_USE_FASTSEEK
+	free_clmt(fp);	/* The map made as the file was opened */
+#endif
 	return res;
 }
 
@@ -4579,6 +4656,9 @@ FRESULT f_lseek (
 	if (res != FR_OK) LEAVE_FF(fs, res);
 
 #if FF_USE_FASTSEEK
+	if (fp->cltbl && ofs != CREATE_LINKMAP && ofs > fp->obj.objsize && (fp->flag & FA_WRITE)) {
+		free_clmt(fp);	/* A seek past the end grows the file, which the map can't */
+	}
 	if (fp->cltbl) {	/* Fast seek */
 		DWORD cl, pcl, ncl, tcl, tlen, ulen;
 		DWORD *tbl;
