@@ -95,8 +95,8 @@ public:
 	void *ReAllocate (void *pBlock, size_t nSize);
 
 	/// \param pBlock Memory block to be freed
-	/// \note Memory space of blocks, which are bigger than the largest bucket size,\n
-	///	  cannot be returned to a free list and is lost.
+	/// \note Blocks, which are bigger than the largest bucket size, go to a free list\n
+	///	  of their own, from which Allocate() takes the smallest one big enough.
 	void Free (void *pBlock);
 
 #ifdef HEAP_DEBUG
@@ -108,6 +108,10 @@ private:
 	void *DoReAllocate (void *pBlock, size_t nSize);
 	void DoFree (void *pBlock);
 
+	// takes the smallest block with room for nSize bytes off m_pLargeFreeList,
+	// returns 0 if none has room (m_SpinLock must be held)
+	THeapBlockHeader *TakeLargeBlock (size_t nSize);
+
 	friend void *KasanAllocateHook (CHeapAllocator& rHeapAllocator, size_t nSize);
 	friend void *KasanReAllocateHook (CHeapAllocator& rHeapAllocator, void *pBlock, ssize_t nSize);
 	friend void KasanFreeHook (CHeapAllocator& rHeapAllocator, void *pBlock);
@@ -117,6 +121,7 @@ private:
 	u8		*m_pLimit;
 	size_t	 	 m_nReserve;
 	THeapBlockBucket m_Bucket[HEAP_BLOCK_MAX_BUCKETS+1];
+	THeapBlockHeader *m_pLargeFreeList;	// freed blocks bigger than the largest bucket
 	CSpinLock	 m_SpinLock;
 
 	static u32 s_nBucketSize[];

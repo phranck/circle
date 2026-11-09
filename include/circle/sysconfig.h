@@ -75,8 +75,9 @@
 // (buckets). Each free list contains blocks of a specific size. On
 // block allocation the requested block size is rounded up to the
 // size of next available bucket size. If the requested size is greater
-// than the largest available bucket size, the block can be allocated,
-// but the memory space is lost, if the block will be freed later.
+// than the largest available bucket size, the block is taken from a
+// separate free list of such blocks, the smallest one big enough, or
+// else from the heap.
 // Because the block buckets have to be walked through on each allocate
 // and free operation, it is preferable to have only a few buckets.
 // With this option you can configure the bucket sizes, so that they
