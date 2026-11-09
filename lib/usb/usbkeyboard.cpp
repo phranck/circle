@@ -233,6 +233,15 @@ void CUSBKeyboardDevice::ReportHandler (const u8 *pReport, unsigned nReportSize)
 		}
 	}
 
+	// a rollover report tells which modifiers are down, but not which keys, so these stay as
+	// they were
+	if (FindByte (pReport+2, USBKEYB_ERROR_ROLL_OVER, USBKEYB_REPORT_SIZE-2))
+	{
+		m_LastReport[0] = pReport[0];
+
+		return;
+	}
+
 	// report released keys
 	for (unsigned i = 2; i < USBKEYB_REPORT_SIZE; i++)
 	{
