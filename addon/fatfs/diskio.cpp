@@ -10,6 +10,7 @@
 
 #include "ff.h"			/* Obtains integer types */
 #include "diskio.h"		/* Declarations of disk functions */
+#include "readahead.h"
 #include <circle/device.h>
 #include <circle/devicenameservice.h>
 #include <circle/util.h>
@@ -20,6 +21,8 @@
 	#error FF_MIN_SS != FF_MAX_SS is not supported!
 #endif
 #define SECTOR_SIZE		FF_MIN_SS
+
+static_assert (CReadAhead::SectorSize == SECTOR_SIZE, "CReadAhead's sectors are FatFs's");
 
 /*-----------------------------------------------------------------------*/
 /* Static Data                                                           */
@@ -41,6 +44,15 @@ static CDevice *s_pVolume[FF_VOLUMES] = {0};
 static u8 *s_pBuffer = 0;
 static unsigned s_nBufferSize = 0;
 
+/* The sectors after a read that follows the one before (readahead.h), one
+   read-ahead for each of the FF_VOLUMES drives, by drive number. A drive's is
+   forgotten as the drive is set up, after a write to it fails, and as the
+   drive is ejected. With FF_MULTI_PARTITION a drive can hold several volumes,
+   which FatFs lets two tasks use at once, so reads then go to the device
+   directly. */
+static CReadAhead s_ReadAhead[FF_VOLUMES];
+#define READ_AHEAD		(FF_MULTI_PARTITION == 0)
+
 
 
 /*-----------------------------------------------------------------------*/
@@ -54,6 +66,60 @@ static void disk_removed (
 {
 	*((CDevice **) pContext) = 0;
 }
+
+
+
+/*-----------------------------------------------------------------------*/
+/* Read-ahead                                                            */
+/*-----------------------------------------------------------------------*/
+
+#if READ_AHEAD
+
+/* Reads the sectors from `ullSector` on for a drive's read-ahead
+   (`CReadAhead::Read()`), `nMaxCount` of them and fewer near the device's
+   end. Returns how many it read, or `0` if the device's size is unknown,
+   `ullSector` lies past its end, or the read fails. */
+static unsigned read_ahead (
+	void *pContext,		/* the drive's `CDevice` */
+	u8 *pBuffer,		/* room for `nMaxCount` sectors, word aligned */
+	u64 ullSector,		/* the first sector, any */
+	unsigned nMaxCount	/* the most sectors to read in one operation */
+)
+{
+	CDevice *pDevice = (CDevice *) pContext;
+
+	u64 ullSize = pDevice->GetSize ();
+	if (ullSize == (u64) -1)
+	{
+		return 0;
+	}
+
+	u64 ullSectors = ullSize / SECTOR_SIZE;
+	if (ullSector >= ullSectors)
+	{
+		return 0;
+	}
+
+	unsigned nCount = nMaxCount;
+	if (ullSectors - ullSector < nCount)
+	{
+		nCount = (unsigned) (ullSectors - ullSector);
+	}
+
+	if (pDevice->Seek (ullSector * SECTOR_SIZE) == (u64) -1)
+	{
+		return 0;
+	}
+
+	if (pDevice->Read (pBuffer, nCount * SECTOR_SIZE) != (int) (nCount * SECTOR_SIZE))
+	{
+		return 0;
+	}
+
+	return nCount;
+}
+
+#endif
 
 
 
@@ -89,6 +155,8 @@ DSTATUS disk_initialize (
 		return STA_NOINIT;
 	}
 
+	s_ReadAhead[pdrv].Invalidate ();
+
 	s_pVolume[pdrv] = CDeviceNameService::Get ()->GetDevice (s_pVolumeName[pdrv], TRUE);
 	if (s_pVolume[pdrv] != 0)
 	{
@@ -123,6 +191,13 @@ DRESULT disk_read (
 	{
 		return RES_NOTRDY;
 	}
+
+#if READ_AHEAD
+	if (s_ReadAhead[pdrv].Read (buff, sector, count, read_ahead, pDevice))
+	{
+		return RES_OK;
+	}
+#endif
 
 	/* Ensure that the transfer buffer is word aligned */
 	BYTE *pBuffer = buff;
@@ -211,8 +286,12 @@ DRESULT disk_write (
 
 	if (pDevice->Write (pBuffer, nSize) < 0)
 	{
+		s_ReadAhead[pdrv].Invalidate ();
+
 		return RES_ERROR;
 	}
+
+	s_ReadAhead[pdrv].Written (buff, sector, count);
 
 	return RES_OK;
 }
@@ -305,6 +384,7 @@ DRESULT disk_ioctl (
 		}
 
 		s_pVolume[pdrv] = 0;
+		s_ReadAhead[pdrv].Invalidate ();
 
 		return RES_OK;
 	}
