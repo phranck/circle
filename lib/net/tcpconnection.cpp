@@ -1959,10 +1959,15 @@ void CTCPConnection::TimerHandler (unsigned nTimer)
 	case TCPTimerRetransmission:
 		m_RTOCalculator.RetransmissionTimerExpired (m_nSND_UNA);
 
-		if (m_nRetransmissionCount-- == 0)
+		// Keep the decrement as separate volatile read and write operations for C++20.
 		{
-			m_bTimedOut = TRUE;
-			break;
+			const unsigned nRetransmissionCount = m_nRetransmissionCount;
+			m_nRetransmissionCount = nRetransmissionCount - 1;
+			if (nRetransmissionCount == 0)
+			{
+				m_bTimedOut = TRUE;
+				break;
+			}
 		}
 
 		switch (m_State)
