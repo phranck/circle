@@ -18,6 +18,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 #include <circle/net/netconfig.h>
+#include <assert.h>
 
 CNetConfig::CNetConfig (void)
 :	m_bUseDHCP (TRUE)
@@ -38,6 +39,7 @@ void CNetConfig::Reset (void)
 	m_DefaultGateway.Set (NullAddress);
 	m_DNSServer.Set (NullAddress);
 	m_NTPServer.Set (NullAddress);
+	m_DomainName[0] = '\0';
 	UpdateBroadcastAddress ();
 }
 
@@ -73,6 +75,19 @@ void CNetConfig::SetDNSServer (u32 nAddress)
 void CNetConfig::SetNTPServer (u32 nAddress)
 {
 	m_NTPServer.Set (nAddress);
+}
+
+void CNetConfig::SetDomainName (const char *pDomainName)
+{
+	assert (pDomainName != 0);
+
+	unsigned i = 0;
+	while (i < NET_DOMAIN_NAME_MAX && pDomainName[i] != '\0')
+	{
+		m_DomainName[i] = pDomainName[i];
+		i++;
+	}
+	m_DomainName[i] = '\0';
 }
 
 void CNetConfig::SetIPAddress (const u8 *pAddress)
@@ -137,6 +152,11 @@ const CIPAddress *CNetConfig::GetBroadcastAddress (void) const
 const CIPAddress *CNetConfig::GetNTPServer (void) const
 {
 	return &m_NTPServer;
+}
+
+const char *CNetConfig::GetDomainName (void) const
+{
+	return m_DomainName;
 }
 
 void CNetConfig::UpdateBroadcastAddress (void)
