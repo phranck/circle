@@ -28,6 +28,10 @@
 
 #define USBKEYB_REPORT_SIZE	8
 
+// a keyboard puts this usage in all key fields of a report, when more keys are down than the
+// report can hold (ErrorRollOver); the modifier byte still holds the modifiers
+#define USBKEYB_ERROR_ROLL_OVER	0x01
+
 // The raw handler is called when the keyboard sends a status report (on status change and/or continously).
 typedef void TKeyStatusHandlerRaw (unsigned char	ucModifiers,	// see usbhid.h
 				   const unsigned char	RawKeys[6]);	// key code or 0 in each byte
