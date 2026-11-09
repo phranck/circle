@@ -33,7 +33,8 @@ CNetConnection::CNetConnection (CNetConfig	*pNetConfig,
 	m_nOwnPort (nOwnPort),
 	m_nProtocol (nProtocol),
 	m_nMSS (0),
-	m_Checksum (*pNetConfig->GetIPAddress (), rForeignIP, nProtocol)
+	m_Checksum (*pNetConfig->GetIPAddress (), rForeignIP, nProtocol),
+	m_bReleased (FALSE)
 {
 	assert (m_pNetConfig != 0);
 	assert (m_pNetworkLayer != 0);
@@ -49,7 +50,8 @@ CNetConnection::CNetConnection (CNetConfig	*pNetConfig,
 	m_nOwnPort (nOwnPort),
 	m_nProtocol (nProtocol),
 	m_nMSS (0),
-	m_Checksum (*pNetConfig->GetIPAddress (), nProtocol)
+	m_Checksum (*pNetConfig->GetIPAddress (), nProtocol),
+	m_bReleased (FALSE)
 {
 	assert (m_pNetConfig != 0);
 	assert (m_pNetworkLayer != 0);
