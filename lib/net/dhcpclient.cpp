@@ -74,6 +74,7 @@ struct TDHCPOption
 #define DHCP_OPTION_ROUTER	3
 #define DHCP_OPTION_DNSSERVER	6
 #define DHCP_OPTION_HOSTNAME	12
+#define DHCP_OPTION_DOMAINNAME	15
 #define DHCP_OPTION_NTPSERVER	42
 #define DHCP_OPTION_REQIPADDR	50
 #define DHCP_OPTION_LEASETIME	51
@@ -102,6 +103,8 @@ struct TDHCPOption
 PACKED;
 
 static const char FromDHCPClient[] = "dhcp";
+
+#define DOMAIN_LABEL_MAX	63		// characters, as the DNS limits a label
 
 #define MAX_TRIES	4
 const unsigned CDHCPClient::s_TimeoutHZ[MAX_TRIES] = {4*HZ, 8*HZ, 16*HZ, 32*HZ};
@@ -302,6 +305,7 @@ TDHCPStatus CDHCPClient::SelectAndRequest (void)
 	m_pNetConfig->SetDefaultGateway (m_nRxRouter);
 	m_pNetConfig->SetDNSServer (m_nRxDNSServer);
 	m_pNetConfig->SetNTPServer (m_nRxNTPServer);
+	m_pNetConfig->SetDomainName (m_RxDomainName);
 
 	m_nIPAddressLeaseTime = m_nRxIPAddressLeaseTime;
 	m_nRenewalTimeValue   = m_nRxRenewalTimeValue;
@@ -419,6 +423,8 @@ TDHCPStatus CDHCPClient::RenewOrRebind (boolean bRenew, unsigned nTimeout)
 		return DHCPStatusConfigChanged;
 	}
 
+	m_pNetConfig->SetDomainName (m_RxDomainName);
+
 	// times may have changed
 	m_nIPAddressLeaseTime = m_nRxIPAddressLeaseTime;
 	m_nRenewalTimeValue   = m_nRxRenewalTimeValue;
@@ -493,7 +499,7 @@ boolean CDHCPClient::SendDiscover (void)
 	static const u8 Options[] =
 	{
 		DHCP_OPTION_MSGTYPE,  1, DHCP_OPTION_MSGTYPE_DISCOVER,
-		DHCP_OPTION_PARMLIST, 7,
+		DHCP_OPTION_PARMLIST, 8,
 			DHCP_OPTION_SUBNETMASK,
 			DHCP_OPTION_ROUTER,
 			DHCP_OPTION_DNSSERVER,
@@ -501,6 +507,7 @@ boolean CDHCPClient::SendDiscover (void)
 			DHCP_OPTION_RENEWALTIME,
 			DHCP_OPTION_REBINDTIME,
 			DHCP_OPTION_NTPSERVER,
+			DHCP_OPTION_DOMAINNAME,
 		DHCP_OPTION_END
 	};
 
@@ -523,7 +530,7 @@ boolean CDHCPClient::SendRequest (u32 nCIAddr)
 #define REQ_OFFSET_SERVERID	5
 			DHCP_OPTION_REQIPADDR, 4, 0, 0, 0, 0,
 #define REQ_OFFSET_REQIPADDR	11
-			DHCP_OPTION_PARMLIST,  7,
+			DHCP_OPTION_PARMLIST,  8,
 				DHCP_OPTION_SUBNETMASK,
 				DHCP_OPTION_ROUTER,
 				DHCP_OPTION_DNSSERVER,
@@ -531,6 +538,7 @@ boolean CDHCPClient::SendRequest (u32 nCIAddr)
 				DHCP_OPTION_RENEWALTIME,
 				DHCP_OPTION_REBINDTIME,
 				DHCP_OPTION_NTPSERVER,
+				DHCP_OPTION_DOMAINNAME,
 			DHCP_OPTION_END
 		};
 
@@ -545,7 +553,7 @@ boolean CDHCPClient::SendRequest (u32 nCIAddr)
 		const static u8 Options[] =
 		{
 			DHCP_OPTION_MSGTYPE,   1, DHCP_OPTION_MSGTYPE_REQUEST,
-			DHCP_OPTION_PARMLIST,  7,
+			DHCP_OPTION_PARMLIST,  8,
 				DHCP_OPTION_SUBNETMASK,
 				DHCP_OPTION_ROUTER,
 				DHCP_OPTION_DNSSERVER,
@@ -553,6 +561,7 @@ boolean CDHCPClient::SendRequest (u32 nCIAddr)
 				DHCP_OPTION_RENEWALTIME,
 				DHCP_OPTION_REBINDTIME,
 				DHCP_OPTION_NTPSERVER,
+				DHCP_OPTION_DOMAINNAME,
 			DHCP_OPTION_END
 		};
 
@@ -658,6 +667,7 @@ boolean CDHCPClient::ReceiveMessage (void)
 	m_nRxSubnetMask		= 0;
 	m_nRxRouter		= 0;
 	m_nRxDNSServer		= 0;
+	m_RxDomainName[0]	= '\0';
 	m_nRxIPAddressLeaseTime = 0;
 	m_nRxOptionsOverload	= 0;
 	m_nRxMessageType	= 0;
@@ -731,6 +741,13 @@ void CDHCPClient::ScanOptions (const u8 *pOptions, unsigned nOptionsSize)
 			    && (u8 *) pOption+4+2 <= pOptionsEnd)
 			{
 				m_nRxDNSServer = GetUnaligned (pOption->Value);	// take the 1st DNS server
+			}
+			goto Skip;
+
+		case DHCP_OPTION_DOMAINNAME:
+			if ((u8 *) pOption+pOption->Len+2 <= pOptionsEnd)
+			{
+				ReadDomainName (pOption->Value, pOption->Len, m_RxDomainName);
 			}
 			goto Skip;
 
@@ -874,6 +891,71 @@ u32 CDHCPClient::GetXID (void) const
 	assert (pMACAddress != 0);
 
 	return GetUnaligned (pMACAddress+2) + CTimer::Get ()->GetClockTicks ();
+}
+
+boolean CDHCPClient::ReadDomainName (const u8 *pValue, unsigned nLength, char *pDomainName)
+{
+	assert (pValue != 0);
+	assert (pDomainName != 0);
+	pDomainName[0] = '\0';
+
+	while (nLength > 0 && pValue[nLength-1] == '\0')
+	{
+		nLength--;
+	}
+
+	if (nLength > 0 && pValue[nLength-1] == '.')
+	{
+		nLength--;
+	}
+
+	if (nLength == 0 || nLength > NET_DOMAIN_NAME_MAX)
+	{
+		return FALSE;
+	}
+
+	unsigned nLabelLength = 0;
+	for (unsigned i = 0; i < nLength; i++)
+	{
+		char chChar = (char) pValue[i];
+		if (chChar == '.')
+		{
+			if (nLabelLength == 0 || pValue[i-1] == '-')
+			{
+				return FALSE;
+			}
+
+			nLabelLength = 0;
+
+			continue;
+		}
+
+		boolean bLetterOrDigit =    (chChar >= 'a' && chChar <= 'z')
+					 || (chChar >= 'A' && chChar <= 'Z')
+					 || (chChar >= '0' && chChar <= '9');
+		if (   !bLetterOrDigit
+		    && !(chChar == '-' && nLabelLength > 0))
+		{
+			return FALSE;
+		}
+
+		if (++nLabelLength > DOMAIN_LABEL_MAX)
+		{
+			return FALSE;
+		}
+	}
+
+	// the last label must not be empty (a second dot at the end) or end with a hyphen
+	if (   nLabelLength == 0
+	    || pValue[nLength-1] == '-')
+	{
+		return FALSE;
+	}
+
+	memcpy (pDomainName, pValue, nLength);
+	pDomainName[nLength] = '\0';
+
+	return TRUE;
 }
 
 u32 CDHCPClient::GetUnaligned (const void *pPointer)
