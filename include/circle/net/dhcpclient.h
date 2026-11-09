@@ -66,6 +66,12 @@ private:
 
 	u32 GetXID (void) const;
 
+	// copies the value of a Domain Name option (15), nLength bytes, to pDomainName, which
+	// has room for NET_DOMAIN_NAME_MAX+1 characters; NUL bytes at its end and one dot after
+	// its last label are dropped; the rest must be labels of 1 to 63 letters, digits and
+	// inner hyphens, joined by dots, otherwise the result is FALSE and an empty string
+	static boolean ReadDomainName (const u8 *pValue, unsigned nLength, char *pDomainName);
+
 	static u32 GetUnaligned (const void *pPointer);
 	static void SetUnaligned (void *pPointer, u32 nValue);
 
@@ -99,6 +105,7 @@ private:
 	u32 m_nRxSubnetMask;		// 1
 	u32 m_nRxRouter;		// 3
 	u32 m_nRxDNSServer;		// 6
+	char m_RxDomainName[NET_DOMAIN_NAME_MAX+1];	// 15, "" if absent or invalid
 
 	u32 m_nRxIPAddressLeaseTime;	// 51
 	u8  m_nRxOptionsOverload;	// 52

@@ -23,6 +23,8 @@
 #include <circle/net/ipaddress.h>
 #include <circle/types.h>
 
+#define NET_DOMAIN_NAME_MAX	253	// characters, as the DNS limits a name
+
 class CNetConfig
 {
 public:
@@ -38,6 +40,9 @@ public:
 	void SetDefaultGateway (u32 nAddress);
 	void SetDNSServer (u32 nAddress);
 	void SetNTPServer (u32 nAddress);
+	/// \param pDomainName Domain name supplied by DHCP, or an empty string\n
+	///	   (up to NET_DOMAIN_NAME_MAX characters, the value is copied)
+	void SetDomainName (const char *pDomainName);
 
 	void SetIPAddress (const u8 *pAddress);
 	void SetNetMask (const u8 *pNetMask);
@@ -53,6 +58,8 @@ public:
 	const CIPAddress *GetDNSServer (void) const;
 	const CIPAddress *GetBroadcastAddress (void) const;		// directed broadcast
 	const CIPAddress *GetNTPServer (void) const;
+	/// \return Domain name supplied by DHCP, or an empty string if none is set.
+	const char *GetDomainName (void) const;
 
 private:
 	void UpdateBroadcastAddress (void);
@@ -66,6 +73,7 @@ private:
 	CIPAddress m_DNSServer;
 	CIPAddress m_BroadcastAddress;
 	CIPAddress m_NTPServer;
+	char m_DomainName[NET_DOMAIN_NAME_MAX+1];
 };
 
 #endif
