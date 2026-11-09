@@ -50,6 +50,8 @@ public:
 	int Listen (u16 nOwnPort, int nProtocol);
 	int Accept (CIPAddress *pForeignIP, u16 *pForeignPort, int hConnection);
 
+	// closes the connection and gives up the handle, which must not be used afterwards;
+	// a connection is deleted only after it has terminated and its handle was given up
 	int Disconnect (int hConnection);
 
 	int Send (CNetBuffer *pData, int nFlags, int hConnection);
@@ -71,6 +73,7 @@ public:
 	int SetOptionDropMembership (const CIPAddress &rGroupAddress, int hConnection);
 
 	boolean IsConnected (int hConnection) const;
+	boolean IsTerminated (int hConnection) const;		// TRUE if no such connection
 	const u8 *GetForeignIP (int hConnection) const;		// returns 0 if not connected
 	u16 GetOwnPort (int hConnection) const;			// returns 0 if not assigned
 	u16 GetMSS (int hConnection) const;
