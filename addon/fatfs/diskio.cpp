@@ -16,6 +16,33 @@
 #include <circle/types.h>
 #include <assert.h>
 
+/*-----------------------------------------------------------------------*/
+/* Configuration options                                                 */
+/*-----------------------------------------------------------------------*/
+
+// FATFS_READ_AHEAD enables a read-ahead buffer for each drive. FatFs reads
+// FAT and directory sectors one at a time. A read of a file reaches the
+// device in pieces that end at a cluster boundary, and a partial sector is
+// read as a whole sector. With small clusters or small reads, the device
+// gets many commands for a few sectors each. With this option, a read of
+// less than 8 KByte that starts within or right after the previous read of
+// the same drive fills the buffer from its first sector. The first
+// read-ahead of such a run reads 8 KByte, and each further one reads twice
+// as much, up to 64 KByte. Reads that the buffer holds are served from it.
+// The buffer takes 64 KByte of heap for each drive that reads ahead. It is
+// allocated at the first read-ahead and kept.
+//
+// Some access patterns get slower with this option. A run of two small
+// reads costs one small read and one read-ahead instead of two small reads,
+// and each FAT32 mount reads ahead once after the boot sector. A defective
+// sector in the requested range costs two failed device reads, one for the
+// read-ahead and one for the request itself. Writes that bypass FatFs do
+// not reach the buffer, so a later read can return up to 64 KByte of stale
+// data. This option requires FF_MULTI_PARTITION 0. It can be enabled here
+// or in Config.mk with "DEFINE += -DFATFS_READ_AHEAD".
+
+//#define FATFS_READ_AHEAD
+
 #if FF_MIN_SS != FF_MAX_SS
 	#error FF_MIN_SS != FF_MAX_SS is not supported!
 #endif
@@ -57,6 +84,223 @@ static void disk_removed (
 
 
 
+#ifdef FATFS_READ_AHEAD
+
+/*-----------------------------------------------------------------------*/
+/* Read-ahead                                                            */
+/*-----------------------------------------------------------------------*/
+
+// With FF_MULTI_PARTITION 1 a drive can hold several volumes, which FatFs
+// lets two tasks use at the same time, and these would share the buffer.
+#if FF_MULTI_PARTITION
+	#error FATFS_READ_AHEAD requires FF_MULTI_PARTITION 0!
+#endif
+
+// These sizes in bytes are the buffer of a drive, the first read-ahead of a
+// run, and the smallest read that goes to the device, unless the buffer
+// holds it.
+#define READ_AHEAD_SIZE		0x10000
+#define READ_AHEAD_FIRST_SIZE	0x2000
+#define READ_AHEAD_DIRECT_SIZE	0x2000
+
+ASSERT_STATIC (READ_AHEAD_SIZE % SECTOR_SIZE == 0);
+ASSERT_STATIC (READ_AHEAD_FIRST_SIZE % SECTOR_SIZE == 0);
+ASSERT_STATIC (READ_AHEAD_DIRECT_SIZE % SECTOR_SIZE == 0);
+ASSERT_STATIC (READ_AHEAD_FIRST_SIZE <= READ_AHEAD_SIZE);
+ASSERT_STATIC (READ_AHEAD_DIRECT_SIZE <= READ_AHEAD_SIZE);
+
+#define READ_AHEAD_SECTORS		(READ_AHEAD_SIZE / SECTOR_SIZE)
+#define READ_AHEAD_FIRST_SECTORS	(READ_AHEAD_FIRST_SIZE / SECTOR_SIZE)
+#define READ_AHEAD_DIRECT_SECTORS	(READ_AHEAD_DIRECT_SIZE / SECTOR_SIZE)
+
+// The read-ahead of one drive. A drive holds one volume. With
+// FF_FS_REENTRANT 1 FatFs locks the volume for each access, so only one
+// task uses the read-ahead of a drive at a time. With FF_FS_REENTRANT 0
+// the application has to ensure this, as it has to for FatFs itself.
+class CReadAhead
+{
+public:
+	CReadAhead (void);
+
+	// Returns TRUE if the sectors are in pOut. Returns FALSE if the caller
+	// has to read them from the device, because the buffer does not hold
+	// them and the read does not start within or right after the previous
+	// read, is READ_AHEAD_DIRECT_SECTORS or larger, reaches past the end of
+	// the device, or follows a failed read-ahead of the same run.
+	boolean Read (u8 *pOut, u64 ullSector, unsigned nCount, CDevice *pDevice);
+
+	// Updates each written sector that the buffer holds.
+	void Written (const u8 *pData, u64 ullSector, unsigned nCount);
+
+	// Forgets the buffer and the previous read.
+	void Invalidate (void);
+
+private:
+	// Returns TRUE if the buffer holds all of the sectors.
+	boolean Holds (u64 ullSector, unsigned nCount) const;
+
+	// Reads nCount sectors from ullSector on into the buffer, fewer at the
+	// end of the device. Returns FALSE and leaves the buffer empty if the
+	// device cannot be read.
+	boolean Fill (u64 ullSector, unsigned nCount, CDevice *pDevice);
+
+private:
+	u8	*m_pBuffer;		// READ_AHEAD_SIZE bytes, 0 until the first read-ahead
+	u64	 m_ullFirst;		// the first sector in the buffer
+	unsigned m_nCount;		// the sectors in the buffer, 0 if it is empty
+	unsigned m_nWindow;		// the sectors of the last read-ahead
+
+	boolean	 m_bPrevious;		// are m_ullPreviousFirst and m_nPreviousCount valid?
+	u64	 m_ullPreviousFirst;	// the first sector of the previous read
+	unsigned m_nPreviousCount;	// the sectors of the previous read
+
+	boolean	 m_bFailed;		// has a read-ahead of the current run failed?
+};
+
+CReadAhead::CReadAhead (void)
+:	m_pBuffer (0),
+	m_ullFirst (0),
+	m_nCount (0),
+	m_nWindow (READ_AHEAD_FIRST_SECTORS),
+	m_bPrevious (FALSE),
+	m_ullPreviousFirst (0),
+	m_nPreviousCount (0),
+	m_bFailed (FALSE)
+{
+}
+
+boolean CReadAhead::Read (u8 *pOut, u64 ullSector, unsigned nCount, CDevice *pDevice)
+{
+	boolean bFollows =    m_bPrevious
+			   && ullSector > m_ullPreviousFirst
+			   && ullSector - m_ullPreviousFirst <= m_nPreviousCount;
+
+	m_bPrevious = TRUE;
+	m_ullPreviousFirst = ullSector;
+	m_nPreviousCount = nCount;
+
+	if (!bFollows)
+	{
+		// A run that starts elsewhere reads ahead again, after a failure too.
+		// A run that has failed reads nothing ahead, so that a defective
+		// sector outside the requested ranges is not read again and again.
+		m_bFailed = FALSE;
+	}
+
+	if (!Holds (ullSector, nCount))
+	{
+		if (   !bFollows
+		    || nCount >= READ_AHEAD_DIRECT_SECTORS
+		    || m_bFailed)
+		{
+			return FALSE;
+		}
+
+		// A run that has reached the end of the buffer reads twice as far
+		// ahead. Any other run starts again with the first read-ahead.
+		if (   m_nCount > 0
+		    && ullSector >= m_ullFirst
+		    && ullSector - m_ullFirst <= m_nCount)
+		{
+			m_nWindow *= 2;
+			if (m_nWindow > READ_AHEAD_SECTORS)
+			{
+				m_nWindow = READ_AHEAD_SECTORS;
+			}
+		}
+		else
+		{
+			m_nWindow = READ_AHEAD_FIRST_SECTORS;
+		}
+
+		if (!Fill (ullSector, nCount > m_nWindow ? nCount : m_nWindow, pDevice))
+		{
+			m_bFailed = TRUE;
+
+			return FALSE;
+		}
+
+		if (!Holds (ullSector, nCount))
+		{
+			return FALSE;
+		}
+	}
+
+	memcpy (pOut, m_pBuffer + (ullSector - m_ullFirst) * SECTOR_SIZE, nCount * SECTOR_SIZE);
+
+	return TRUE;
+}
+
+void CReadAhead::Written (const u8 *pData, u64 ullSector, unsigned nCount)
+{
+	for (unsigned i = 0; i < nCount; i++)
+	{
+		if (Holds (ullSector + i, 1))
+		{
+			memcpy (m_pBuffer + (ullSector + i - m_ullFirst) * SECTOR_SIZE,
+				pData + i * SECTOR_SIZE, SECTOR_SIZE);
+		}
+	}
+}
+
+void CReadAhead::Invalidate (void)
+{
+	m_nCount = 0;
+	m_bPrevious = FALSE;
+	m_bFailed = FALSE;
+}
+
+boolean CReadAhead::Holds (u64 ullSector, unsigned nCount) const
+{
+	return    ullSector >= m_ullFirst
+	       && ullSector - m_ullFirst + nCount <= m_nCount;
+}
+
+boolean CReadAhead::Fill (u64 ullSector, unsigned nCount, CDevice *pDevice)
+{
+	m_nCount = 0;
+
+	if (m_pBuffer == 0)
+	{
+		m_pBuffer = new u8[READ_AHEAD_SIZE];
+		assert (m_pBuffer != 0);
+	}
+
+	u64 ullSize = pDevice->GetSize ();
+	if (ullSize == (u64) -1)
+	{
+		return FALSE;
+	}
+
+	u64 ullSectors = ullSize / SECTOR_SIZE;
+	if (ullSector >= ullSectors)
+	{
+		return FALSE;
+	}
+
+	if (nCount > ullSectors - ullSector)
+	{
+		nCount = (unsigned) (ullSectors - ullSector);
+	}
+
+	if (   pDevice->Seek (ullSector * SECTOR_SIZE) == (u64) -1
+	    || pDevice->Read (m_pBuffer, nCount * SECTOR_SIZE) != (int) (nCount * SECTOR_SIZE))
+	{
+		return FALSE;
+	}
+
+	m_ullFirst = ullSector;
+	m_nCount = nCount;
+
+	return TRUE;
+}
+
+static CReadAhead s_ReadAhead[FF_VOLUMES];
+
+#endif
+
+
+
 /*-----------------------------------------------------------------------*/
 /* Get Drive Status                                                      */
 /*-----------------------------------------------------------------------*/
@@ -88,6 +332,11 @@ DSTATUS disk_initialize (
 	{
 		return STA_NOINIT;
 	}
+
+#ifdef FATFS_READ_AHEAD
+	/* The drive can hold another medium than before. */
+	s_ReadAhead[pdrv].Invalidate ();
+#endif
 
 	s_pVolume[pdrv] = CDeviceNameService::Get ()->GetDevice (s_pVolumeName[pdrv], TRUE);
 	if (s_pVolume[pdrv] != 0)
@@ -123,6 +372,13 @@ DRESULT disk_read (
 	{
 		return RES_NOTRDY;
 	}
+
+#ifdef FATFS_READ_AHEAD
+	if (s_ReadAhead[pdrv].Read (buff, sector, count, pDevice))
+	{
+		return RES_OK;
+	}
+#endif
 
 	/* Ensure that the transfer buffer is word aligned */
 	BYTE *pBuffer = buff;
@@ -211,8 +467,17 @@ DRESULT disk_write (
 
 	if (pDevice->Write (pBuffer, nSize) < 0)
 	{
+#ifdef FATFS_READ_AHEAD
+		/* The device can hold some of the written sectors or a part of them. */
+		s_ReadAhead[pdrv].Invalidate ();
+#endif
+
 		return RES_ERROR;
 	}
+
+#ifdef FATFS_READ_AHEAD
+	s_ReadAhead[pdrv].Written (buff, sector, count);
+#endif
 
 	return RES_OK;
 }
