@@ -126,6 +126,7 @@ private:
 	
 	void StartTimer (unsigned nTimer, unsigned nHZ);
 	void StopTimer (unsigned nTimer);
+	void StopTimers (void);			// all of them
 	void TimerHandler (unsigned nTimer);
 	static void TimerStub (TKernelTimerHandle hTimer, void *pParam, void *pContext);
 

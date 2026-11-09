@@ -127,6 +127,10 @@ PACKED;
 	#define UNEXPECTED_STATE()	((void) 0)
 #endif
 
+// a timer, which expires in CLOSED, finds an unexpected state (TimerHandler ()),
+// so all timers are stopped before
+#define ENTER_CLOSED()		do { StopTimers (); NEW_STATE (TCPStateClosed); } while (0)
+
 #define FLIGHT_SIZE 			(m_nSND_NXT - m_nSND_UNA)	// for congestion control
 
 unsigned CTCPConnection::s_nConnections = 0;
@@ -258,10 +262,7 @@ CTCPConnection::~CTCPConnection (void)
 
 	assert (m_State == TCPStateClosed);
 
-	for (unsigned nTimer = TCPTimerUser; nTimer < TCPTimerUnknown; nTimer++)
-	{
-		StopTimer (nTimer);
-	}
+	StopTimers ();
 
 	// ensure no task is waiting any more
 	m_Event.Set ();
@@ -361,8 +362,7 @@ int CTCPConnection::Close (void)
 
 	case TCPStateListen:
 	case TCPStateSynSent:
-		StopTimer (TCPTimerRetransmission);
-		NEW_STATE (TCPStateClosed);
+		ENTER_CLOSED ();
 		break;
 
 	case TCPStateSynReceived:
@@ -595,7 +595,7 @@ void CTCPConnection::Process (void)
 	if (m_bTimedOut)
 	{
 		m_nErrno = -NET_ERROR_CONNECTION_TIMED_OUT;
-		NEW_STATE (TCPStateClosed);
+		ENTER_CLOSED ();
 		m_Event.Set ();
 		m_TxEvent.Set ();
 		return;
@@ -937,7 +937,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 		{
 			if (bAcceptable)
 			{
-				NEW_STATE (TCPStateClosed);
+				ENTER_CLOSED ();
 				m_bSendSYN = FALSE;
 				m_nErrno = -NET_ERROR_CONNECTION_REFUSED;
 
@@ -1012,7 +1012,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 					if (nFlags & TCP_FLAG_FIN)
 					{
 						SendSegment (TCP_FLAG_RESET, m_nSND_NXT);
-						NEW_STATE (TCPStateClosed);
+						ENTER_CLOSED ();
 						m_nErrno = -NET_ERROR_PROTOCOL_ERROR;
 						m_Event.Set ();
 					}
@@ -1092,7 +1092,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 				else
 				{
 					m_nErrno = -NET_ERROR_CONNECTION_RESET;
-					NEW_STATE (TCPStateClosed);
+					ENTER_CLOSED ();
 					m_Event.Set ();
 
 					delete pPacket;
@@ -1109,7 +1109,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 				m_nErrno = -NET_ERROR_CONNECTION_RESET;
 				m_TxQueue.Flush ();
 				m_RxQueue.Flush ();
-				NEW_STATE (TCPStateClosed);
+				ENTER_CLOSED ();
 				m_Event.Set ();
 
 				delete pPacket;
@@ -1119,7 +1119,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 			case TCPStateClosing:
 			case TCPStateLastAck:
 			case TCPStateTimeWait:
-				NEW_STATE (TCPStateClosed);
+				ENTER_CLOSED ();
 				m_Event.Set ();
 
 				delete pPacket;
@@ -1155,7 +1155,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 			m_nErrno = -NET_ERROR_PROTOCOL_ERROR;
 			m_TxQueue.Flush ();
 			m_RxQueue.Flush ();
-			NEW_STATE (TCPStateClosed);
+			ENTER_CLOSED ();
 			m_Event.Set ();
 
 			delete pPacket;
@@ -1381,7 +1381,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 			if (nSEG_ACK == m_nSND_NXT)	// if our FIN is now acknowledged
 			{
 				m_bFINQueued = FALSE;
-				NEW_STATE (TCPStateClosed);
+				ENTER_CLOSED ();
 				m_Event.Set ();
 
 				delete pPacket;
@@ -1861,6 +1861,14 @@ void CTCPConnection::StopTimer (unsigned nTimer)
 	m_TimerSpinLock.Release ();
 }
 
+void CTCPConnection::StopTimers (void)
+{
+	for (unsigned nTimer = TCPTimerUser; nTimer < TCPTimerUnknown; nTimer++)
+	{
+		StopTimer (nTimer);
+	}
+}
+
 void CTCPConnection::TimerHandler (unsigned nTimer)
 {
 	assert (nTimer < TCPTimerUnknown);
@@ -1920,7 +1928,7 @@ void CTCPConnection::TimerHandler (unsigned nTimer)
 		break;
 
 	case TCPTimerTimeWait:
-		NEW_STATE (TCPStateClosed);
+		ENTER_CLOSED ();
 		break;
 
 	case TCPTimerUser:
