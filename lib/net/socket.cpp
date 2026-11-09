@@ -200,6 +200,19 @@ CSocket *CSocket::Accept (CIPAddress *pForeignIP, u16 *pForeignPort)
 	assert (m_pTransportLayer != 0);
 	assert (m_nBackLog <= SOCKET_MAX_LISTEN_BACKLOG);
 
+	// replace the waiting connections, which have terminated (e.g. reset by the peer)
+	for (unsigned i = 0; i < m_nBackLog; i++)
+	{
+		if (m_pTransportLayer->IsTerminated (m_hListenConnection[i]))
+		{
+			m_pTransportLayer->Disconnect (m_hListenConnection[i]);
+
+			m_hListenConnection[i] = m_pTransportLayer->Listen (m_nOwnPort,
+									    m_nProtocol);
+			assert (m_hListenConnection[i] >= 0);
+		}
+	}
+
 	// find a connection, which is already active or will be active first (with lowest handle)
 #define INT_MAX		0x7FFFFFFF
 	int hConnection = INT_MAX;
@@ -234,6 +247,11 @@ CSocket *CSocket::Accept (CIPAddress *pForeignIP, u16 *pForeignPort)
 	{
 		pNewSocket = new CSocket (*this, hConnection);
 		assert (pNewSocket != 0);
+	}
+	else
+	{
+		// no socket takes over the handle
+		m_pTransportLayer->Disconnect (hConnection);
 	}
 
 	// replace the returned connection with a new listening one
