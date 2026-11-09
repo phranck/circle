@@ -61,25 +61,39 @@ void CTransportLayer::Process (void)
 	assert (m_pNetworkLayer != 0);
 	while ((pNetBuffer = m_pNetworkLayer->Receive (&Sender, &Receiver, &nProtocol)) != 0)
 	{
-		unsigned i;
-		for (i = 0; i < m_pConnection.GetCount (); i++)
+		// a packet goes to the connected connections before it goes to the others, so
+		// that a retransmitted SYN reaches the connection in SYN-RECEIVED it belongs
+		// to and not a listening one with a lower handle, which would answer it as
+		// a new connection
+		boolean bConsumed = FALSE;
+		for (unsigned nPass = 0; nPass < 2 && !bConsumed; nPass++)
 		{
-			// a terminated connection waits only for its handle to be given up
-			if (   m_pConnection[i] == 0
-			    || ((CNetConnection *) m_pConnection[i])->IsTerminated ())
+			for (unsigned i = 0; i < m_pConnection.GetCount (); i++)
 			{
-				continue;
-			}
+				// a terminated connection waits only for its handle to be given up
+				if (   m_pConnection[i] == 0
+				    || ((CNetConnection *) m_pConnection[i])->IsTerminated ())
+				{
+					continue;
+				}
 
-			if (((CNetConnection *) m_pConnection[i])->PacketReceived (
-				pNetBuffer, Sender, Receiver, nProtocol) != 0)
-			{
-				pNetBuffer = 0;
-				break;
+				if (   ((CNetConnection *) m_pConnection[i])->IsConnected ()
+				    != (nPass == 0))
+				{
+					continue;
+				}
+
+				if (((CNetConnection *) m_pConnection[i])->PacketReceived (
+					pNetBuffer, Sender, Receiver, nProtocol) != 0)
+				{
+					pNetBuffer = 0;
+					bConsumed = TRUE;
+					break;
+				}
 			}
 		}
 
-		if (i >= m_pConnection.GetCount ())
+		if (!bConsumed)
 		{
 			// send RESET on not consumed TCP segment
 			if (m_TCPRejector.PacketReceived (pNetBuffer,
