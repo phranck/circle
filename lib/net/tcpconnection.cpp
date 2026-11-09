@@ -1154,6 +1154,21 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 			if (   m_State == TCPStateSynReceived
 			    && !m_bActiveOpen)
 			{
+				// the peer repeats the SYN that opened this connection, because
+				// it has not got the SYN/ACK yet: send that again and stay in
+				// SYN-RECEIVED (a passive open has no timer that would repeat it)
+				if (nSEG_SEQ == m_nIRS)
+				{
+					SendSegment (TCP_FLAG_SYN | TCP_FLAG_ACK,
+						     m_nISS, m_nRCV_NXT);
+					// a retransmission, so the ACK yields no RTT sample (Karn)
+					m_RTOCalculator.SegmentSent (m_nISS);
+
+					delete pPacket;
+
+					return 1;
+				}
+
 				NEW_STATE (TCPStateListen);
 
 				delete pPacket;
