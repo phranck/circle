@@ -28,7 +28,8 @@ CHeapAllocator::CHeapAllocator (const char *pHeapName)
 :	m_pHeapName (pHeapName),
 	m_pNext (0),
 	m_pLimit (0),
-	m_nReserve (0)
+	m_nReserve (0),
+	m_pLargeFreeList (0)
 {
 	memset (m_Bucket, 0, sizeof m_Bucket);
 
@@ -103,7 +104,8 @@ void *CHeapAllocator::DoAllocate (size_t nSize)
 		assert (pBlockHeader->nMagic == HEAP_BLOCK_FREE_MAGIC);
 		pBucket->pFreeList = pBlockHeader->pNext;
 	}
-	else
+	else if (   pBucket->nSize > 0
+		 || (pBlockHeader = TakeLargeBlock (nSize)) == 0)
 	{
 		pBlockHeader = (THeapBlockHeader *) m_pNext;
 
@@ -139,7 +141,11 @@ void *CHeapAllocator::DoAllocate (size_t nSize)
 
 		m_pNext = pNextBlock;
 
-		pBlockHeader->nSize = (u32) nSize;
+		// A bucket block keeps its bucket's size, which DoFree() matches exactly.
+		// A large block keeps all the room it takes, so TakeLargeBlock() can
+		// give it to any later request up to that size.
+		pBlockHeader->nSize = pBucket->nSize > 0 ? (u32) nSize
+							 : (u32) (pNextBlock - pBlockHeader->Data);
 	}
 
 	m_SpinLock.Release ();
@@ -151,6 +157,49 @@ void *CHeapAllocator::DoAllocate (size_t nSize)
 	assert (((uintptr) pResult & HEAP_ALIGN_MASK) == 0);
 
 	return pResult;
+}
+
+THeapBlockHeader *CHeapAllocator::TakeLargeBlock (size_t nSize)
+{
+	// the room of a large block is its request rounded up to HEAP_BLOCK_ALIGN,
+	// so no block fits better than one with this room, and the search ends there
+	size_t nBestFit = (nSize + HEAP_ALIGN_MASK) & ~HEAP_ALIGN_MASK;
+
+	THeapBlockHeader *pBest = 0;
+	THeapBlockHeader *pBeforeBest = 0;
+	THeapBlockHeader *pBefore = 0;
+	for (THeapBlockHeader *pBlock = m_pLargeFreeList; pBlock != 0; pBlock = pBlock->pNext)
+	{
+		assert (pBlock->nMagic == HEAP_BLOCK_FREE_MAGIC);
+		if (   pBlock->nSize >= nSize
+		    && (pBest == 0 || pBlock->nSize < pBest->nSize))
+		{
+			pBest = pBlock;
+			pBeforeBest = pBefore;
+
+			if (pBlock->nSize == nBestFit)
+			{
+				break;
+			}
+		}
+		pBefore = pBlock;
+	}
+
+	if (pBest == 0)
+	{
+		return 0;
+	}
+
+	if (pBeforeBest == 0)
+	{
+		m_pLargeFreeList = pBest->pNext;
+	}
+	else
+	{
+		pBeforeBest->pNext = pBest->pNext;
+	}
+
+	return pBest;
 }
 
 void *CHeapAllocator::ReAllocate (void *pBlock, size_t nSize)
@@ -237,12 +286,12 @@ void CHeapAllocator::DoFree (void *pBlock)
 		}
 	}
 
-#ifdef HEAP_DEBUG
-	CLogger::Get ()->Write (m_pHeapName, LogDebug, "Trying to free large block (size %u)",
-				pBlockHeader->nSize);
+	m_SpinLock.Acquire ();
 
-	pBlockHeader->nMagic = 0;
-#endif
+	pBlockHeader->pNext = m_pLargeFreeList;
+	m_pLargeFreeList = pBlockHeader;
+
+	m_SpinLock.Release ();
 }
 
 #ifdef HEAP_DEBUG
@@ -254,6 +303,21 @@ void CHeapAllocator::DumpStatus (void)
 		CLogger::Get ()->Write (m_pHeapName, LogDebug, "malloc(%lu): %u blocks (max %u)",
 					pBucket->nSize, pBucket->nCount, pBucket->nMaxCount);
 	}
+
+	m_SpinLock.Acquire ();
+
+	unsigned nLargeBlocks = 0;
+	size_t nLargeBytes = 0;
+	for (THeapBlockHeader *pBlock = m_pLargeFreeList; pBlock != 0; pBlock = pBlock->pNext)
+	{
+		nLargeBlocks++;
+		nLargeBytes += pBlock->nSize;
+	}
+
+	m_SpinLock.Release ();
+
+	CLogger::Get ()->Write (m_pHeapName, LogDebug, "large blocks free: %u (%lu bytes)",
+				nLargeBlocks, (unsigned long) nLargeBytes);
 }
 
 #endif
