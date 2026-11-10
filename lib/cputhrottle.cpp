@@ -30,7 +30,7 @@ static const char FromCPUThrottle[] = "throttle";
 
 CCPUThrottle *CCPUThrottle::s_pThis = 0;
 
-CCPUThrottle::CCPUThrottle (TCPUSpeed InitialSpeed)
+CCPUThrottle::CCPUThrottle (TCPUSpeed InitialSpeed, unsigned nDefaultFanPin)
 :	m_bDynamic (FALSE),
 	m_nMinClockRate (600),
 	m_nMaxClockRate (600),
@@ -50,7 +50,13 @@ CCPUThrottle::CCPUThrottle (TCPUSpeed InitialSpeed)
 	s_pThis = this;
 	assert (s_pThis != 0);
 
+	assert (nDefaultFanPin == 0 || (2 <= nDefaultFanPin && nDefaultFanPin < GPIO_PINS));
 	unsigned nFanPin = CKernelOptions::Get ()->GetGPIOFanPin ();
+	if (nFanPin == 0)
+	{
+		nFanPin = nDefaultFanPin;
+	}
+
 	if (nFanPin > 0)
 	{
 		m_bFanConnected = TRUE;
