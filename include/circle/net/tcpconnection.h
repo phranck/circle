@@ -127,6 +127,9 @@ private:
 	void StartTimer (unsigned nTimer, unsigned nHZ);
 	void StopTimer (unsigned nTimer);
 	void StopTimers (void);			// all of them
+
+	void EnterTimeWait (void);		// or CLOSED, if too many are in TIME-WAIT
+	void SetState (TTCPState State);	// counts the connections in TIME-WAIT
 	void TimerHandler (unsigned nTimer);
 	static void TimerStub (TKernelTimerHandle hTimer, void *pParam, void *pContext);
 
@@ -196,6 +199,7 @@ private:
 	unsigned m_nSendTimeout;	// us
 
 	static unsigned s_nConnections;
+	static volatile int s_nTimeWaitConnections;	// left from the timer handler too
 
 	static const char *s_pStateName[];
 };
