@@ -37,15 +37,31 @@ static int USBKeyboardBoltDecodeReport (const unsigned char *input,
 		output[i] = 0;
 	}
 
+	boolean bRollOver = FALSE;
 	unsigned slot = 2;
-	for (unsigned bit = 0; bit < 120 && slot < 8; bit++)
+	for (unsigned bit = 0; bit < 120; bit++)
 	{
 		if (input[1 + bit / 8] & (1U << (bit % 8)))
 		{
 			unsigned usage = bit < 112 ? 0x04 + bit
 				       : bit < 117 ? 0x87 + bit - 112
 				       : 0x90 + bit - 117;
-			output[slot++] = (unsigned char) usage;
+			if (slot < 8)
+			{
+				output[slot++] = (unsigned char) usage;
+			}
+			else
+			{
+				bRollOver = TRUE;
+			}
+		}
+	}
+
+	if (bRollOver)
+	{
+		for (unsigned i = 2; i < 8; i++)
+		{
+			output[i] = USBKEYB_ERROR_ROLL_OVER;
 		}
 	}
 
