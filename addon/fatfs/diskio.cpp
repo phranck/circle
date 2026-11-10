@@ -25,8 +25,9 @@
 // device in pieces that end at a cluster boundary, and a partial sector is
 // read as a whole sector. With small clusters or small reads, the device
 // gets many commands for a few sectors each. With this option, a read of
-// less than 8 KByte that starts within or right after the previous read of
-// the same drive fills the buffer from its first sector. The first
+// less than 8 KByte that starts after the first sector of the previous read
+// of the same drive and no later than right after its end fills the buffer
+// from its first sector. The first
 // read-ahead of such a run reads 8 KByte, and each further one reads twice
 // as much, up to 64 KByte. Reads that the buffer holds are served from it.
 // The buffer takes 64 KByte of heap for each drive that reads ahead. It is
@@ -124,9 +125,10 @@ public:
 
 	// Returns TRUE if the sectors are in pOut. Returns FALSE if the caller
 	// has to read them from the device, because the buffer does not hold
-	// them and the read does not start within or right after the previous
-	// read, is READ_AHEAD_DIRECT_SECTORS or larger, reaches past the end of
-	// the device, or follows a failed read-ahead of the same run.
+	// them and the read does not start after the first sector of the
+	// previous read and no later than right after its end, is
+	// READ_AHEAD_DIRECT_SECTORS or larger, reaches past the end of the
+	// device, or belongs to a run whose read-ahead failed.
 	boolean Read (u8 *pOut, u64 ullSector, unsigned nCount, CDevice *pDevice);
 
 	// Updates each written sector that the buffer holds.
