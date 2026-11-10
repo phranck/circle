@@ -29,6 +29,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 #include <circle/net/tcpconnection.h>
+#include <circle/atomic.h>
 #include <circle/net/sizes.h>
 #include <circle/net/error.h>
 #include <circle/macros.h>
@@ -39,7 +40,9 @@
 
 //#define TCP_DEBUG
 
-#define TCP_MAX_CONNECTIONS		1000	// maximum number of active TCP connections
+#define TCP_MAX_CONNECTIONS		1000	// maximum number of active TCP connections,
+					//	not counting those in TIME-WAIT
+#define TCP_MAX_TIME_WAIT		1000	// maximum number of TCP connections in TIME-WAIT
 
 					// maximum segment size to be received from network layer
 #define TCP_MSS_R			(ETH_MAX_LEN - ETH_HEADER_LEN - IP_HEADER_LEN)
@@ -118,7 +121,7 @@ PACKED;
 #if !defined (NDEBUG) && defined (TCP_DEBUG)
 	#define NEW_STATE(state)	NewState (state, __LINE__);
 #else
-	#define NEW_STATE(state)	(m_State = state)
+	#define NEW_STATE(state)	SetState (state)
 #endif
 
 #ifndef NDEBUG
@@ -134,6 +137,7 @@ PACKED;
 #define FLIGHT_SIZE 			(m_nSND_NXT - m_nSND_UNA)	// for congestion control
 
 unsigned CTCPConnection::s_nConnections = 0;
+volatile int CTCPConnection::s_nTimeWaitConnections = 0;
 
 u32 CTCPConnection::s_nReceiveWindow = TCP_CONFIG_WINDOW;
 
@@ -878,7 +882,9 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 		}
 		else if (nFlags & TCP_FLAG_SYN)
 		{
-			if (s_nConnections >= TCP_MAX_CONNECTIONS)
+			// a connection in TIME-WAIT does not keep a new one out (EnterTimeWait ())
+			if (   s_nConnections - (unsigned) AtomicGet (&s_nTimeWaitConnections)
+			    >= TCP_MAX_CONNECTIONS)
 			{
 				m_ForeignIP.Set (rSenderIP);
 				m_nForeignPort = be2le16 (pHeader->nSourcePort);
@@ -1391,8 +1397,13 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 
 					m_bFINQueued = FALSE;
 					StopTimer (TCPTimerRetransmission);
-					NEW_STATE (TCPStateTimeWait);
-					StartTimer (TCPTimerTimeWait, HZ_TIMEWAIT);
+					EnterTimeWait ();
+					if (m_State == TCPStateClosed)	// closed without waiting
+					{
+						delete pPacket;
+
+						return 1;
+					}
 				}
 				break;
 
@@ -1535,8 +1546,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 				m_bFINQueued = FALSE;
 				StopTimer (TCPTimerRetransmission);
 				StopTimer (TCPTimerUser);
-				NEW_STATE (TCPStateTimeWait);
-				StartTimer (TCPTimerTimeWait, HZ_TIMEWAIT);
+				EnterTimeWait ();
 			}
 			else
 			{
@@ -1547,8 +1557,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 		case TCPStateFinWait2:
 			StopTimer (TCPTimerRetransmission);
 			StopTimer (TCPTimerUser);
-			NEW_STATE (TCPStateTimeWait);
-			StartTimer (TCPTimerTimeWait, HZ_TIMEWAIT);
+			EnterTimeWait ();
 			break;
 
 		case TCPStateCloseWait:
@@ -1607,8 +1616,7 @@ int CTCPConnection::NotificationReceived (TICMPNotificationType  Type,
 		   : -NET_ERROR_PROTOCOL_ERROR;
 
 	StopTimer (TCPTimerRetransmission);
-	NEW_STATE (TCPStateTimeWait);
-	StartTimer (TCPTimerTimeWait, HZ_TIMEWAIT);
+	EnterTimeWait ();
 
 	m_Event.Set ();
 
@@ -1894,6 +1902,41 @@ void CTCPConnection::StopTimers (void)
 	}
 }
 
+void CTCPConnection::EnterTimeWait (void)
+{
+	if (m_State != TCPStateTimeWait)
+	{
+		// connections in TIME-WAIT do not count against TCP_MAX_CONNECTIONS,
+		// so their number is limited here, and one more closes without waiting
+		if (AtomicGet (&s_nTimeWaitConnections) >= TCP_MAX_TIME_WAIT)
+		{
+			ENTER_CLOSED ();
+
+			return;
+		}
+
+		NEW_STATE (TCPStateTimeWait);
+	}
+
+	StartTimer (TCPTimerTimeWait, HZ_TIMEWAIT);
+}
+
+void CTCPConnection::SetState (TTCPState State)
+{
+	if (   State == TCPStateTimeWait
+	    && m_State != TCPStateTimeWait)
+	{
+		AtomicIncrement (&s_nTimeWaitConnections);
+	}
+	else if (   State != TCPStateTimeWait
+		 && m_State == TCPStateTimeWait)
+	{
+		AtomicDecrement (&s_nTimeWaitConnections);
+	}
+
+	m_State = State;
+}
+
 void CTCPConnection::TimerHandler (unsigned nTimer)
 {
 	assert (nTimer < TCPTimerUnknown);
@@ -2000,7 +2043,9 @@ TTCPState CTCPConnection::NewState (TTCPState State, unsigned nLine)
 					s_pStateName[m_State], s_pStateName[State], nLine);
 	}
 
-	return m_State = State;
+	SetState (State);
+
+	return State;
 }
 
 void CTCPConnection::UnexpectedState (unsigned nLine)
