@@ -95,6 +95,11 @@ public:
 	};
 	virtual TStatus GetStatus (void) const = 0;
 
+	// the owner of the handle has given it up, so the connection may be deleted once it
+	// has terminated; until then the handle names this connection and no other
+	void Release (void)		{ m_bReleased = TRUE; }
+	boolean IsReleased (void) const	{ return m_bReleased; }
+
 protected:
 	CNetConfig    *m_pNetConfig;
 	CNetworkLayer *m_pNetworkLayer;
@@ -106,6 +111,9 @@ protected:
 	u16 m_nMSS;
 
 	CChecksumCalculator m_Checksum;
+
+private:
+	boolean m_bReleased;		// set by Release (), never cleared
 };
 
 #endif

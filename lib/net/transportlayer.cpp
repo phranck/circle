@@ -61,23 +61,39 @@ void CTransportLayer::Process (void)
 	assert (m_pNetworkLayer != 0);
 	while ((pNetBuffer = m_pNetworkLayer->Receive (&Sender, &Receiver, &nProtocol)) != 0)
 	{
-		unsigned i;
-		for (i = 0; i < m_pConnection.GetCount (); i++)
+		// a packet goes to the connected connections before it goes to the others, so
+		// that a retransmitted SYN reaches the connection in SYN-RECEIVED it belongs
+		// to and not a listening one with a lower handle, which would answer it as
+		// a new connection
+		boolean bConsumed = FALSE;
+		for (unsigned nPass = 0; nPass < 2 && !bConsumed; nPass++)
 		{
-			if (m_pConnection[i] == 0)
+			for (unsigned i = 0; i < m_pConnection.GetCount (); i++)
 			{
-				continue;
-			}
+				// a terminated connection waits only for its handle to be given up
+				if (   m_pConnection[i] == 0
+				    || ((CNetConnection *) m_pConnection[i])->IsTerminated ())
+				{
+					continue;
+				}
 
-			if (((CNetConnection *) m_pConnection[i])->PacketReceived (
-				pNetBuffer, Sender, Receiver, nProtocol) != 0)
-			{
-				pNetBuffer = 0;
-				break;
+				if (   ((CNetConnection *) m_pConnection[i])->IsConnected ()
+				    != (nPass == 0))
+				{
+					continue;
+				}
+
+				if (((CNetConnection *) m_pConnection[i])->PacketReceived (
+					pNetBuffer, Sender, Receiver, nProtocol) != 0)
+				{
+					pNetBuffer = 0;
+					bConsumed = TRUE;
+					break;
+				}
 			}
 		}
 
-		if (i >= m_pConnection.GetCount ())
+		if (!bConsumed)
 		{
 			// send RESET on not consumed TCP segment
 			if (m_TCPRejector.PacketReceived (pNetBuffer,
@@ -99,7 +115,9 @@ void CTransportLayer::Process (void)
 		unsigned i;
 		for (i = 0; i < m_pConnection.GetCount (); i++)
 		{
-			if (m_pConnection[i] == 0)
+			// a terminated connection waits only for its handle to be given up
+			if (   m_pConnection[i] == 0
+			    || ((CNetConnection *) m_pConnection[i])->IsTerminated ())
 			{
 				continue;
 			}
@@ -120,7 +138,7 @@ void CTransportLayer::Process (void)
 			{			
 				((CNetConnection *) m_pConnection[i])->Process ();
 			}
-			else
+			else if (((CNetConnection *) m_pConnection[i])->IsReleased ())
 			{
 				delete (CNetConnection *) m_pConnection[i];
 				m_pConnection[i] = 0;
@@ -265,6 +283,9 @@ int CTransportLayer::Connect (const CIPAddress &rIPAddress, u16 nPort, u16 nOwnP
 	int nResult = ((CNetConnection *) m_pConnection[i])->Connect ();
 	if (nResult < 0)
 	{
+		// the caller gets no handle, so nobody else can give it up
+		((CNetConnection *) m_pConnection[i])->Release ();
+
 		return nResult;
 	}
 	
@@ -336,7 +357,11 @@ int CTransportLayer::Disconnect (int hConnection)
 		return -NET_ERROR_INVALID_VALUE;
 	}
 
-	return ((CNetConnection *) m_pConnection[hConnection])->Close ();
+	// released after Close (), which therefore never runs on a deleted connection
+	int nResult = ((CNetConnection *) m_pConnection[hConnection])->Close ();
+	((CNetConnection *) m_pConnection[hConnection])->Release ();
+
+	return nResult;
 }
 
 int CTransportLayer::Send (CNetBuffer *pNetBuffer, int nFlags, int hConnection)
@@ -466,6 +491,18 @@ boolean CTransportLayer::IsConnected (int hConnection) const
 	}
 
 	return ((CNetConnection *) m_pConnection[hConnection])->IsConnected ();
+}
+
+boolean CTransportLayer::IsTerminated (int hConnection) const
+{
+	assert (hConnection >= 0);
+	if (   hConnection >= (int) m_pConnection.GetCount ()
+	    || m_pConnection[hConnection] == 0)
+	{
+		return TRUE;
+	}
+
+	return ((CNetConnection *) m_pConnection[hConnection])->IsTerminated ();
 }
 
 const u8 *CTransportLayer::GetForeignIP (int hConnection) const
