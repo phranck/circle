@@ -51,8 +51,8 @@ typedef void TSystemThrottledHandler (TSystemThrottledState CurrentState, void *
 ///	     Because clock rate changes to the CPU clock may also effect the CORE clock,\n
 ///	     this could result in a changing transfer speed.
 
-/// \note If the cmdline.txt option "gpiofanpin=" is used, this class controls a GPIO fan\n
-///	  not the CPU clock rate.
+/// \note If the cmdline.txt option "gpiofanpin=" is used, or the application gives a fan pin\n
+///	  to the constructor, this class controls a GPIO fan not the CPU clock rate.
 
 class CCPUThrottle	/// Manages CPU clock rate depending on app/user requirements and SoC temperature
 {
@@ -60,7 +60,10 @@ public:
 	/// \param InitialSpeed CPU speed to be set initially\n
 	/// CPUSpeedUnknown: use the cmdline.txt parameter "fast=true" or CPUSpeedLow (if not set)\n
 	/// Otherwise: the selected value
-	CCPUThrottle (TCPUSpeed InitialSpeed = CPUSpeedUnknown);
+	/// \param nDefaultFanPin GPIO pin number of a fan (2 to 53), used if the cmdline.txt\n
+	/// parameter "gpiofanpin" is not set, or 0 for no fan (e.g. 45 for the fan connector\n
+	/// of the Raspberry Pi 5)
+	CCPUThrottle (TCPUSpeed InitialSpeed = CPUSpeedUnknown, unsigned nDefaultFanPin = 0);
 	~CCPUThrottle (void);
 
 	/// \return Is CPU clock rate change supported?\n
