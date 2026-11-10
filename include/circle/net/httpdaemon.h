@@ -83,6 +83,7 @@ private:
 	u16	       m_nPort;
 	unsigned       m_nMaxMultipartSize;
 	unsigned       m_nTimeoutSeconds;
+	boolean	       m_bWorker;		// created for a connection, not a listener
 	
 	u8 *m_pContentBuffer;
 
@@ -103,7 +104,9 @@ private:
 	char *m_pMultipartBuffer;			// pointer to allocated multipart buffer
 	char *m_pMultipartPointer;			// pointer into allocated multipart buffer
 
-	static unsigned s_nInstanceCount;
+	// workers of all daemons, the listeners not counted
+	static unsigned s_nWorkerCount;		// until deleted (each holds a task until then)
+	static unsigned s_nActiveWorkerCount;	// until Worker () has returned
 };
 
 #endif

@@ -21,6 +21,7 @@
 //
 #include <circle/net/httpdaemon.h>
 #include <circle/net/in.h>
+#include <circle/sched/scheduler.h>
 #include <circle/netdevice.h>
 #include <circle/sysconfig.h>
 #include <circle/logger.h>
@@ -37,7 +38,8 @@
 
 static const char FromHTTPDaemon[] = "httpd";
 
-unsigned CHTTPDaemon::s_nInstanceCount = 0;
+unsigned CHTTPDaemon::s_nWorkerCount = 0;
+unsigned CHTTPDaemon::s_nActiveWorkerCount = 0;
 
 CHTTPDaemon::CHTTPDaemon (CNetSubSystem *pNetSubSystem, CSocket *pSocket,
 			  unsigned nMaxContentSize, u16 nPort, unsigned nMaxMultipartSize,
@@ -49,9 +51,14 @@ CHTTPDaemon::CHTTPDaemon (CNetSubSystem *pNetSubSystem, CSocket *pSocket,
 	m_nPort (nPort),
 	m_nMaxMultipartSize (nMaxMultipartSize),
 	m_nTimeoutSeconds (nTimeoutSeconds),
+	m_bWorker (pSocket != 0),
 	m_pContentBuffer (0)
 {
-	s_nInstanceCount++;
+	if (m_bWorker)
+	{
+		s_nWorkerCount++;
+		s_nActiveWorkerCount++;
+	}
 
 	if (m_nMaxContentSize > 0)
 	{
@@ -81,18 +88,25 @@ CHTTPDaemon::~CHTTPDaemon (void)
 
 	m_pNetSubSystem = 0;
 
-	s_nInstanceCount--;
+	if (m_bWorker)
+	{
+		assert (s_nWorkerCount > 0);
+		s_nWorkerCount--;
+	}
 }
 
 void CHTTPDaemon::Run (void)
 {
-	if (m_pSocket == 0)
+	if (!m_bWorker)
 	{
 		Listener ();
 	}
 	else
 	{
 		Worker ();
+
+		assert (s_nActiveWorkerCount > 0);
+		s_nActiveWorkerCount--;
 	}
 }
 
@@ -156,13 +170,20 @@ void CHTTPDaemon::Listener (void)
 			continue;
 		}
 
-		if (s_nInstanceCount >= MAX_CLIENTS+1)
+		if (s_nActiveWorkerCount >= MAX_CLIENTS)
 		{
 			CLogger::Get ()->Write (FromHTTPDaemon, LogWarning, "Too many clients");
 
 			delete pConnection;
 
 			continue;
+		}
+
+		// a worker that has served its connection keeps its task until
+		// the scheduler deletes it during a following Yield ()
+		while (s_nWorkerCount >= MAX_CLIENTS)
+		{
+			CScheduler::Get ()->Yield ();
 		}
 
 		CreateWorker (m_pNetSubSystem, pConnection);
