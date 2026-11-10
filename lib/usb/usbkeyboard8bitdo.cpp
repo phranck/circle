@@ -65,12 +65,29 @@ void CUSBKeyboard8BitDoDevice::ReportHandler (const u8 *pReport, unsigned nRepor
 	{
 		u8 Report[USBKEYB_REPORT_SIZE] = {pReport[1]};
 		unsigned nSlots = 0;
+		boolean bRollOver = FALSE;
 
-		for (unsigned nUsage = 0x04; nUsage <= 0x77 && nSlots < 6; nUsage++)
+		for (unsigned nUsage = 0x04; nUsage <= 0x77; nUsage++)
 		{
 			if (pReport[2 + nUsage / 8] & (1U << (nUsage % 8)))
 			{
-				Report[2 + nSlots++] = nUsage;
+				if (nSlots < 6)
+				{
+					Report[2 + nSlots++] = nUsage;
+				}
+				else
+				{
+					bRollOver = TRUE;
+				}
+			}
+		}
+
+		// more keys are down than the boot report can hold
+		if (bRollOver)
+		{
+			for (unsigned i = 2; i < USBKEYB_REPORT_SIZE; i++)
+			{
+				Report[i] = USBKEYB_ERROR_ROLL_OVER;
 			}
 		}
 
