@@ -27,6 +27,8 @@
 #include <circle/string.h>
 #include <circle/types.h>
 
+#include <new>
+
 enum TTaskState
 {
 	TaskStateNew,
@@ -47,7 +49,15 @@ public:
 	/// \param bCreateSuspended Set to TRUE, if the task is initially not ready to run
 	CTask (unsigned nStackSize = TASK_STACK_SIZE, boolean bCreateSuspended = FALSE);
 
+	/// \param nStackSize Stack size for this task (0 used internally for the main task)
+	/// \param bCreateSuspended Set to TRUE, if the task is initially not ready to run
+	/// \param nothrow Selects a null-returning stack allocation and no registration on failure
+	CTask (unsigned nStackSize, boolean bCreateSuspended, const std::nothrow_t &nothrow);
+
 	virtual ~CTask (void);
+
+	/// \return TRUE if the task and its stack were created and it joined the scheduler
+	boolean IsValid (void) const	{ return m_State != TaskStateUnknown; }
 
 	/// \brief Override this method to define the entry point for your class
 	virtual void Run (void);
@@ -116,6 +126,11 @@ private:
 	friend class CScheduler;
 
 private:
+	/// \param nStackSize Stack size for this task
+	/// \param bCreateSuspended Set to TRUE, if the task is initially not ready to run
+	/// \param bNoThrow TRUE to return without registration when the stack cannot be allocated
+	CTask (unsigned nStackSize, boolean bCreateSuspended, bool bNoThrow);
+
 	void InitializeRegs (void);
 
 	static void TaskEntry (void *pParam);

@@ -23,6 +23,16 @@
 #include <assert.h>
 
 CTask::CTask (unsigned nStackSize, boolean bCreateSuspended)
+:	CTask (nStackSize, bCreateSuspended, false)
+{
+}
+
+CTask::CTask (unsigned nStackSize, boolean bCreateSuspended, const std::nothrow_t &)
+:	CTask (nStackSize, bCreateSuspended, true)
+{
+}
+
+CTask::CTask (unsigned nStackSize, boolean bCreateSuspended, bool bNoThrow)
 :	m_State (bCreateSuspended ? TaskStateNew : TaskStateReady),
 	m_bSuspended (FALSE),
 	m_nStackSize (nStackSize),
@@ -42,8 +52,20 @@ CTask::CTask (unsigned nStackSize, boolean bCreateSuspended)
 #else
 		assert ((m_nStackSize & 15) == 0);
 #endif
-		m_pStack = new u8[m_nStackSize];
-		assert (m_pStack != 0);
+		if (bNoThrow)
+		{
+			m_pStack = new (std::nothrow) u8[m_nStackSize];
+			if (m_pStack == 0)
+			{
+				m_State = TaskStateUnknown;
+				return;
+			}
+		}
+		else
+		{
+			m_pStack = new u8[m_nStackSize];
+			assert (m_pStack != 0);
+		}
 
 		InitializeRegs ();
 	}
@@ -55,8 +77,11 @@ CTask::CTask (unsigned nStackSize, boolean bCreateSuspended)
 
 CTask::~CTask (void)
 {
-	assert (m_State == TaskStateTerminated);
-	m_State = TaskStateUnknown;
+	if (m_State != TaskStateUnknown)
+	{
+		assert (m_State == TaskStateTerminated);
+		m_State = TaskStateUnknown;
+	}
 
 	delete [] m_pStack;
 	m_pStack = 0;
