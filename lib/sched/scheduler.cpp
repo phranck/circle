@@ -18,6 +18,8 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 #include <circle/sched/scheduler.h>
+#include <circle/multicore.h>
+#include <circle/atomic.h>
 #include <circle/timer.h>
 #include <circle/logger.h>
 #include <circle/string.h>
@@ -35,7 +37,8 @@ CScheduler::CScheduler (void)
 	m_nCurrent (0),
 	m_pTaskSwitchHandler (0),
 	m_pTaskTerminationHandler (0),
-	m_iSuspendNewTasks (0)
+	m_iSuspendNewTasks (0),
+	m_nSecondaryCoreCalls (0)
 {
 	assert (s_pThis == 0);
 	s_pThis = this;
@@ -55,6 +58,11 @@ CScheduler::~CScheduler (void)
 
 void CScheduler::Yield (void)
 {
+	if (CountSecondaryCoreCall (__builtin_return_address (0)))
+	{
+		return;		// the tasks run on core 0, nothing to switch here
+	}
+
 	while ((m_nCurrent = GetNextTask ()) == MAX_TASKS)	// no task is ready
 	{
 		assert (m_nTasks > 0);
@@ -84,30 +92,47 @@ void CScheduler::Yield (void)
 
 void CScheduler::Sleep (unsigned nSeconds)
 {
+	boolean bSecondaryCore = CountSecondaryCoreCall (__builtin_return_address (0));
+
 	// be sure the clock does not run over taken as signed int
 	const unsigned nSleepMax = 1800;	// normally 2147 but to be sure
 	while (nSeconds > nSleepMax)
 	{
-		usSleep (nSleepMax * 1000000);
+		usSleepOnCore (nSleepMax * 1000000, bSecondaryCore);
 
 		nSeconds -= nSleepMax;
 	}
 
-	usSleep (nSeconds * 1000000);
+	usSleepOnCore (nSeconds * 1000000, bSecondaryCore);
 }
 
 void CScheduler::MsSleep (unsigned nMilliSeconds)
 {
+	boolean bSecondaryCore = CountSecondaryCoreCall (__builtin_return_address (0));
+
 	if (nMilliSeconds > 0)
 	{
-		usSleep (nMilliSeconds * 1000);
+		usSleepOnCore (nMilliSeconds * 1000, bSecondaryCore);
 	}
 }
 
 void CScheduler::usSleep (unsigned nMicroSeconds)
 {
+	usSleepOnCore (nMicroSeconds, CountSecondaryCoreCall (__builtin_return_address (0)));
+}
+
+void CScheduler::usSleepOnCore (unsigned nMicroSeconds, boolean bSecondaryCore)
+{
 	if (nMicroSeconds > 0)
 	{
+		if (bSecondaryCore)
+		{
+			// there is no task on this core that could sleep
+			CTimer::SimpleusDelay (nMicroSeconds);
+
+			return;
+		}
+
 		unsigned nTicks = nMicroSeconds * (CLOCKHZ / 1000000);
 
 		unsigned nStartTicks = CTimer::Get ()->GetClockTicks ();
@@ -121,8 +146,16 @@ void CScheduler::usSleep (unsigned nMicroSeconds)
 	}
 }
 
+unsigned CScheduler::GetSecondaryCoreCalls (void) const
+{
+	return (unsigned) AtomicGet (&m_nSecondaryCoreCalls);
+}
+
 CTask *CScheduler::GetCurrentTask (void)
 {
+	// m_pCurrent is a task of core 0, a secondary core has no current task
+	PanicOnSecondaryCore ("GetCurrentTask", __builtin_return_address (0));
+
 	return m_pCurrent;
 }
 
@@ -260,9 +293,12 @@ void CScheduler::ListTasks (CDevice *pTarget)
 	}
 }
 
-void CScheduler::AddTask (CTask *pTask)
+void CScheduler::AddTask (CTask *pTask, const void *pCaller)
 {
 	assert (pTask != 0);
+
+	// core 0 reads m_pTask without a lock, it must not be written from elsewhere
+	PanicOnSecondaryCore ("New task", pCaller);
 
 	if (m_iSuspendNewTasks)
 	{
@@ -309,8 +345,12 @@ void CScheduler::RemoveTask (CTask *pTask)
 }
 
 boolean CScheduler::BlockTask (CTask **ppWaitListHead, unsigned nMicroSeconds,
-				const volatile boolean *pState)
+				const void *pCaller, const volatile boolean *pState)
 {
+	// m_pCurrent is a task of core 0, it must not be blocked from elsewhere.
+	// This does not depend on *pState, so that a wait fails on its first call.
+	PanicOnSecondaryCore ("Wait", pCaller);
+
 	assert (ppWaitListHead != 0);
 	assert (m_pCurrent->m_pWaitListNext == 0);
 	assert (m_pCurrent != 0);
@@ -485,6 +525,55 @@ unsigned CScheduler::GetNextTask (void)
 	}
 
 	return MAX_TASKS;
+}
+
+boolean CScheduler::CountSecondaryCoreCall (const void *pCaller)
+{
+#ifdef ARM_ALLOW_MULTI_CORE
+	unsigned nCore = CMultiCoreSupport::ThisCore ();
+	if (nCore == 0)
+	{
+		return FALSE;
+	}
+
+	int nCalls = AtomicGet (&m_nSecondaryCoreCalls);
+	while (nCalls < MAX_SECONDARY_CORE_CALLS)
+	{
+		int nPrevious = AtomicCompareExchange (&m_nSecondaryCoreCalls, nCalls, nCalls+1);
+		if (nPrevious == nCalls)
+		{
+			break;
+		}
+
+		nCalls = nPrevious;	// another core was faster, try again
+	}
+
+	if (nCalls == 0)		// first call
+	{
+		CLogger::Get ()->Write (FromScheduler, LogWarning,
+					"Yield or sleep on core %u (return address 0x%lX),"
+					" tasks run on core 0 only",
+					nCore, (uintptr) pCaller);
+	}
+
+	return TRUE;
+#else
+	return FALSE;
+#endif
+}
+
+void CScheduler::PanicOnSecondaryCore (const char *pOperation, const void *pCaller)
+{
+#ifdef ARM_ALLOW_MULTI_CORE
+	unsigned nCore = CMultiCoreSupport::ThisCore ();
+	if (nCore != 0)
+	{
+		CLogger::Get ()->Write (FromScheduler, LogPanic,
+					"%s on core %u (return address 0x%lX),"
+					" tasks run on core 0 only",
+					pOperation, nCore, (uintptr) pCaller);
+	}
+#endif
 }
 
 CScheduler *CScheduler::Get (void)

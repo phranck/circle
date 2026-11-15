@@ -50,7 +50,7 @@ CTask::CTask (unsigned nStackSize, boolean bCreateSuspended)
 
 	m_Name.Format ("@%lp", this);
 
-	CScheduler::Get ()->AddTask (this);
+	CScheduler::Get ()->AddTask (this, __builtin_return_address (0));
 }
 
 CTask::~CTask (void)
