@@ -146,6 +146,7 @@ private:
 
 private:
 	boolean m_bActiveOpen;
+	boolean m_bMayListenAgain;		// passive open, neither handed out by Accept () nor closed
 	volatile TTCPState m_State;
 
 	volatile int m_nErrno;			// signalize error to the user

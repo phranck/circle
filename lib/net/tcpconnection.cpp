@@ -173,6 +173,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 				u16		 nOwnPort)
 :	CNetConnection (pNetConfig, pNetworkLayer, rForeignIP, nForeignPort, nOwnPort, IPPROTO_TCP),
 	m_bActiveOpen (TRUE),
+	m_bMayListenAgain (FALSE),
 	m_State (TCPStateClosed),
 	m_nErrno (0),
 	m_TxQueue (TRUE),
@@ -230,6 +231,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 				u16		 nOwnPort)
 :	CNetConnection (pNetConfig, pNetworkLayer, nOwnPort, IPPROTO_TCP),
 	m_bActiveOpen (FALSE),
+	m_bMayListenAgain (TRUE),
 	m_State (TCPStateListen),
 	m_nErrno (0),
 	m_TxQueue (TRUE),
@@ -351,6 +353,12 @@ int CTCPConnection::Accept (CIPAddress *pForeignIP, u16 *pForeignPort)
 	case TCPStateListen:
 		m_Event.Clear ();
 		m_Event.Wait ();
+
+		// the handshake that woke this task went back to LISTEN before it ran
+		if (m_State == TCPStateListen)
+		{
+			return -NET_ERROR_CONNECTION_RESET;
+		}
 		break;
 
 	case TCPStateSynReceived:
@@ -364,11 +372,17 @@ int CTCPConnection::Accept (CIPAddress *pForeignIP, u16 *pForeignPort)
 	assert (pForeignPort != 0);
 	*pForeignPort = m_nForeignPort;
 
+	// handed out to one peer, so it never takes another one's SYN
+	m_bMayListenAgain = FALSE;
+
 	return m_nErrno;
 }
 
 int CTCPConnection::Close (void)
 {
+	// given up, so it never takes another peer's SYN
+	m_bMayListenAgain = FALSE;
+
 	switch (m_State)
 	{
 	case TCPStateClosed:
@@ -1102,7 +1116,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 			{
 			case TCPStateSynReceived:
 				m_TxQueue.Flush ();
-				if (!m_bActiveOpen)
+				if (m_bMayListenAgain)
 				{
 					ReturnToListen ();
 
@@ -1180,13 +1194,18 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 					return 1;
 				}
 
-				ReturnToListen ();
+				// a SYN that opens another connection: one nobody took over
+				// yet waits for the next peer, any other one is reset below
+				if (m_bMayListenAgain)
+				{
+					ReturnToListen ();
 
-				delete pPacket;
+					delete pPacket;
 
-				return 1;
+					return 1;
+				}
 			}
-			
+
 			SendSegment (TCP_FLAG_RESET, m_nSND_NXT);
 			m_nErrno = -NET_ERROR_PROTOCOL_ERROR;
 			m_TxQueue.Flush ();
@@ -1934,7 +1953,7 @@ void CTCPConnection::EnterTimeWait (void)
 
 void CTCPConnection::ReturnToListen (void)
 {
-	assert (!m_bActiveOpen);
+	assert (m_bMayListenAgain);
 
 	// nothing of the given up handshake may act in LISTEN: no repeat of its
 	// SYN/ACK, no timeout
