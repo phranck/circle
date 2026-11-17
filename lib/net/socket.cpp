@@ -25,6 +25,20 @@
 #include <circle/util.h>
 #include <assert.h>
 
+// Send () and SendTo () call this after each segment they queue. A caller, which may wait,
+// gives the other tasks a turn after every segment, so the protocol handlers keep working
+// while a long message is queued. One, which must not wait (MSG_DONTWAIT), gives them a turn
+// once, after the last segment, so a long message costs one round of the other tasks, and
+// not one for each segment.
+static void YieldAfterSegment (int nFlags, unsigned nRemaining)
+{
+	if (   !(nFlags & MSG_DONTWAIT)
+	    || nRemaining == 0)
+	{
+		CScheduler::Get ()->Yield ();
+	}
+}
+
 CSocket::CSocket (CNetSubSystem *pNetSubSystem, int nProtocol)
 :	CNetSocket (pNetSubSystem),
 	m_pNetConfig (pNetSubSystem->GetConfig ()),
@@ -292,7 +306,7 @@ int CSocket::Send (const void *pBuffer, unsigned nLength, int nFlags)
 		p += nPayload;
 		nRemaining -= nPayload;
 
-		CScheduler::Get ()->Yield ();
+		YieldAfterSegment (nFlags, nRemaining);
 	}
 
 	return nLength;
@@ -411,7 +425,7 @@ int CSocket::SendTo (const void *pBuffer, unsigned nLength, int nFlags,
 		p += nPayload;
 		nRemaining -= nPayload;
 
-		CScheduler::Get ()->Yield ();
+		YieldAfterSegment (nFlags, nRemaining);
 	}
 
 	return nLength;
