@@ -57,6 +57,9 @@ private:
 		u32	unused;
 	};
 
+	// takes back the TX descriptors the controller has sent
+	void tx_reclaim (void);
+
 	int eth_alloc (void);
 	int macb_initialize (void);
 	void macb_halt (void);
@@ -85,7 +88,7 @@ private:
 	CMACAddress m_MACAddress;
 
 	u8 *m_rx_buffer;
-	u8 *m_tx_buffer;
+	u8 *m_tx_buffer;		// one buffer for each TX descriptor
 	TDMADescriptor *m_rx_ring;
 	TDMADescriptor *m_tx_ring;
 	TDMADescriptor *m_dummy_desc;
@@ -97,9 +100,10 @@ private:
 
 	unsigned m_rx_tail;
 
-	unsigned m_tx_head;
-	unsigned m_tx_outstanding;
-	unsigned m_tx_last_ticks;
+	unsigned m_tx_head;		// next TX descriptor to hand over
+	unsigned m_tx_tail;		// oldest TX descriptor handed over and not taken back
+	unsigned m_tx_outstanding;	// number of TX descriptors handed over and not taken back
+	unsigned m_tx_last_ticks;	// time of the last frame handed over or taken back
 
 	u16 m_phy_addr;
 	int m_link;		// link state (1: up, 0: down)

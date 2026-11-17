@@ -810,6 +810,10 @@
 #define MACB_RX_RING_SIZE	64
 #define MACB_TX_RING_SIZE	16
 
+// The most TX descriptors handed to the controller at once: one fewer than the ring has,
+// so the descriptor at m_tx_head always has TX_USED set and the controller stops there.
+#define MACB_TX_MAX_OUTSTANDING	(MACB_TX_RING_SIZE - 1)
+
 #define DMA_DESC_SIZE		16
 #define DMA_DESC_BYTES(n)	((n) * DMA_DESC_SIZE)
 #define MACB_TX_DMA_DESC_SIZE	(DMA_DESC_BYTES(MACB_TX_RING_SIZE))
@@ -1001,40 +1005,9 @@ const CMACAddress *CMACBDevice::GetMACAddress (void) const
 
 boolean CMACBDevice::IsSendFrameAdvisable (void)
 {
-	if (!m_tx_outstanding)
-	{
-		return TRUE;
-	}
+	tx_reclaim ();
 
-	DataSyncBarrier ();
-	u32 ctrl = m_tx_ring[m_tx_head].ctrl;
-	if (!(ctrl & MACB_BIT (TX_USED)))
-	{
-		// After a timeout just assume, TX is completed.
-		unsigned nTicks = CTimer::Get ()->GetClockTicks ();
-		if (   m_tx_last_ticks
-		    && nTicks - m_tx_last_ticks > MACB_TX_TIMEOUT * (CLOCKHZ / 1000000))
-		{
-			// LOGWARN ("TX timeout");
-
-			goto Timeout;
-		}
-
-		return FALSE;
-	}
-
-	assert (!(ctrl & MACB_BIT (TX_UNDERRUN)));
-	assert (!(ctrl & MACB_BIT (TX_BUF_EXHAUSTED)));
-
-Timeout:
-	if (++m_tx_head == MACB_TX_RING_SIZE)
-	{
-		m_tx_head = 0;
-	}
-
-	m_tx_outstanding = 0;
-
-	return TRUE;
+	return m_tx_outstanding < MACB_TX_MAX_OUTSTANDING;
 }
 
 boolean CMACBDevice::SendFrame (const void *pBuffer, unsigned nLength)
@@ -1053,10 +1026,25 @@ boolean CMACBDevice::SendFrame (const void *pBuffer, unsigned nLength)
 		return FALSE;
 	}
 
-	m_tx_outstanding = 1;
-
 	assert (m_tx_buffer);
-	memcpy (m_tx_buffer, pBuffer, nLength);
+	memcpy (m_tx_buffer + GEM_TX_BUFFER_SIZE * m_tx_head, pBuffer, nLength);
+	DataMemBarrier ();
+
+	// The next descriptor ends the queue, before this one is handed over, so the controller
+	// stops there, and not at a descriptor that was given up after a timeout.
+	unsigned nNext = m_tx_head + 1;
+	if (nNext == MACB_TX_RING_SIZE)
+	{
+		nNext = 0;
+	}
+
+	u32 next_ctrl = MACB_BIT (TX_USED);
+	if (nNext == (MACB_TX_RING_SIZE - 1))
+	{
+		next_ctrl |= MACB_BIT (TX_WRAP);
+	}
+
+	m_tx_ring[nNext].ctrl = next_ctrl;
 	DataMemBarrier ();
 
 	u32 ctrl = nLength & TXBUF_FRMLEN_MASK;
@@ -1066,16 +1054,76 @@ boolean CMACBDevice::SendFrame (const void *pBuffer, unsigned nLength)
 		ctrl |= MACB_BIT (TX_WRAP);
 	}
 
-	set_addr (&m_tx_ring[m_tx_head], m_tx_buffer_dma);
+	set_addr (&m_tx_ring[m_tx_head], m_tx_buffer_dma + GEM_TX_BUFFER_SIZE * m_tx_head);
 	DataMemBarrier ();
 	m_tx_ring[m_tx_head].ctrl = ctrl;
 	DataSyncBarrier ();
 
 	macb_writel (NCR, macb_readl (NCR) | MACB_BIT (TSTART));
 
+	m_tx_head = nNext;
+	m_tx_outstanding++;
 	m_tx_last_ticks = CTimer::Get ()->GetClockTicks ();
 
 	return TRUE;
+}
+
+void CMACBDevice::tx_reclaim (void)
+{
+	if (!m_tx_outstanding)
+	{
+		return;
+	}
+
+	// The controller sets TX_USED in the descriptor of each frame it has sent.
+	DataSyncBarrier ();
+	while (m_tx_outstanding)
+	{
+		u32 ctrl = m_tx_ring[m_tx_tail].ctrl;
+		if (!(ctrl & MACB_BIT (TX_USED)))
+		{
+			break;
+		}
+
+		assert (!(ctrl & MACB_BIT (TX_UNDERRUN)));
+		assert (!(ctrl & MACB_BIT (TX_BUF_EXHAUSTED)));
+
+		if (++m_tx_tail == MACB_TX_RING_SIZE)
+		{
+			m_tx_tail = 0;
+		}
+
+		m_tx_outstanding--;
+		m_tx_last_ticks = CTimer::Get ()->GetClockTicks ();
+	}
+
+	if (!m_tx_outstanding)
+	{
+		return;
+	}
+
+	// The controller ignores TSTART, while it is still transmitting. If it has read the
+	// descriptor of a frame, before SendFrame() handed it over, it has stopped there with
+	// the frame waiting, so it is started again.
+	if (!(macb_readl (TSR) & MACB_BIT (TGO)))
+	{
+		macb_writel (NCR, macb_readl (NCR) | MACB_BIT (TSTART));
+	}
+
+	// After a timeout just assume, the oldest frame is completed.
+	unsigned nTicks = CTimer::Get ()->GetClockTicks ();
+	if (nTicks - m_tx_last_ticks > MACB_TX_TIMEOUT * (CLOCKHZ / 1000000))
+	{
+		// LOGWARN ("TX timeout");
+
+		if (++m_tx_tail == MACB_TX_RING_SIZE)
+		{
+			m_tx_tail = 0;
+		}
+
+		m_tx_outstanding--;
+		m_tx_last_ticks = nTicks;
+	}
 }
 
 boolean CMACBDevice::ReceiveFrame (void *pBuffer, unsigned *pResultLength)
@@ -1234,7 +1282,7 @@ int CMACBDevice::eth_alloc (void)
 	m_rx_buffer = reinterpret_cast<u8 *> (ulMemStart);
 	m_tx_buffer = m_rx_buffer + GEM_RX_BUFFER_SIZE * MACB_RX_RING_SIZE;
 
-	m_rx_ring = reinterpret_cast<TDMADescriptor *> (m_tx_buffer + GEM_TX_BUFFER_SIZE);
+	m_rx_ring = reinterpret_cast<TDMADescriptor *> (m_tx_buffer + GEM_TX_BUFFER_SIZE * MACB_TX_RING_SIZE);
 	m_tx_ring = m_rx_ring + MACB_RX_RING_SIZE;
 	m_dummy_desc = m_tx_ring + MACB_TX_RING_SIZE;
 
@@ -1293,6 +1341,7 @@ int CMACBDevice::macb_initialize (void)
 	m_rx_tail = 0;
 
 	m_tx_head = 0;
+	m_tx_tail = 0;
 	m_tx_outstanding = 0;
 	m_tx_last_ticks = 0;
 
