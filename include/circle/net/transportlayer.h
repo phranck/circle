@@ -31,6 +31,8 @@
 #include <circle/spinlock.h>
 #include <circle/types.h>
 
+class CSynchronizationEvent;
+
 class CTransportLayer
 {
 public:
@@ -47,7 +49,9 @@ public:
 	// nOwnPort may be 0 (dynamic port assignment)
 	int Connect (const CIPAddress &rIPAddress, u16 nPort, u16 nOwnPort, int nProtocol);
 
-	int Listen (u16 nOwnPort, int nProtocol);
+	// pAcceptEvent (0 for none) is set, while the connection waits to be accepted,
+	// when its handshake completes and when it terminates
+	int Listen (u16 nOwnPort, int nProtocol, CSynchronizationEvent *pAcceptEvent = 0);
 	int Accept (CIPAddress *pForeignIP, u16 *pForeignPort, int hConnection);
 
 	// closes the connection and gives up the handle, which must not be used afterwards;
@@ -76,6 +80,7 @@ public:
 
 	boolean IsConnected (int hConnection) const;
 	boolean IsTerminated (int hConnection) const;		// TRUE if no such connection (logged)
+	boolean IsAcceptable (int hConnection) const;		// handshake complete, Accept () returns at once
 	const u8 *GetForeignIP (int hConnection) const;		// returns 0 if not connected
 	u16 GetOwnPort (int hConnection) const;			// returns 0 if not assigned
 	u16 GetMSS (int hConnection) const;

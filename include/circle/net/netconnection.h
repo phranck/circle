@@ -73,7 +73,11 @@ public:
 
 	virtual boolean IsConnected (void) const = 0;
 	virtual boolean IsTerminated (void) const = 0;
-	
+
+	// TRUE for a connection of a listening socket, whose handshake is complete,
+	// so that Accept () hands it out at once; only TCP connections listen
+	virtual boolean IsAcceptable (void) const	{ return FALSE; }
+
 	virtual void Process (void) = 0;
 
 	// returns: -1: invalid packet, 0: not to me, 1: packet consumed

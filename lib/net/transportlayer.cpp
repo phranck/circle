@@ -301,7 +301,7 @@ int CTransportLayer::Connect (const CIPAddress &rIPAddress, u16 nPort, u16 nOwnP
 	return i;
 }
 
-int CTransportLayer::Listen (u16 nOwnPort, int nProtocol)
+int CTransportLayer::Listen (u16 nOwnPort, int nProtocol, CSynchronizationEvent *pAcceptEvent)
 {
 	m_SpinLock.Acquire ();
 
@@ -335,7 +335,7 @@ int CTransportLayer::Listen (u16 nOwnPort, int nProtocol)
 
 	assert (m_pNetConfig != 0);
 	assert (m_pNetworkLayer != 0);
-	m_pConnection[i] = new CTCPConnection (m_pNetConfig, m_pNetworkLayer, nOwnPort);
+	m_pConnection[i] = new CTCPConnection (m_pNetConfig, m_pNetworkLayer, nOwnPort, pAcceptEvent);
 	assert (m_pConnection[i] != 0);
 
 	m_SpinLock.Release ();
@@ -496,6 +496,17 @@ boolean CTransportLayer::IsTerminated (int hConnection) const
 	}
 
 	return pConnection->IsTerminated ();
+}
+
+boolean CTransportLayer::IsAcceptable (int hConnection) const
+{
+	CNetConnection *pConnection = GetConnection (hConnection, CALLER);
+	if (pConnection == 0)
+	{
+		return FALSE;
+	}
+
+	return pConnection->IsAcceptable ();
 }
 
 const u8 *CTransportLayer::GetForeignIP (int hConnection) const

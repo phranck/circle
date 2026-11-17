@@ -25,6 +25,7 @@
 #include <circle/net/netconfig.h>
 #include <circle/net/transportlayer.h>
 #include <circle/net/error.h>
+#include <circle/sched/synchronizationevent.h>
 #include <circle/types.h>
 
 #define SOCKET_MAX_LISTEN_BACKLOG	32
@@ -63,7 +64,10 @@ public:
 	/// \brief Accept an incoming connection (TCP only, must call Listen() before)
 	/// \param pForeignIP	IP address of the remote host will be returned here
 	/// \param pForeignPort	Remote port number will be returned here
-	/// \return Newly created socket to be used to communicate with the remote host (0 on error)
+	/// \return Newly created socket to be used to communicate with the remote host (0 on error,\n
+	/// or when a connection terminated before it was accepted, which is replaced)
+	/// \note Blocks until the handshake of an incoming connection is complete, or a waiting\n
+	/// connection terminated. Returns at once, when GetStatus() reports bRxReady.
 	CSocket *Accept (CIPAddress *pForeignIP, u16 *pForeignPort);
 
 	/// \brief Send a message to a remote host
@@ -155,6 +159,8 @@ private:
 
 	unsigned m_nBackLog;
 	int m_hListenConnection[SOCKET_MAX_LISTEN_BACKLOG];
+	CSynchronizationEvent m_AcceptEvent;	// set by the connections of m_hListenConnection
+						//	(CTransportLayer::Listen ())
 
 	boolean m_bEnableBroadcast;
 };

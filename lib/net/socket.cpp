@@ -182,7 +182,8 @@ int CSocket::Listen (unsigned nBackLog)
 
 	for (unsigned i = 0; i < m_nBackLog; i++)
 	{
-		m_hListenConnection[i] = m_pTransportLayer->Listen (m_nOwnPort, m_nProtocol);
+		m_hListenConnection[i] = m_pTransportLayer->Listen (m_nOwnPort, m_nProtocol,
+								    &m_AcceptEvent);
 		assert (m_hListenConnection[i] >= 0);
 	}
 
@@ -200,49 +201,64 @@ CSocket *CSocket::Accept (CIPAddress *pForeignIP, u16 *pForeignPort)
 	assert (m_pTransportLayer != 0);
 	assert (m_nBackLog <= SOCKET_MAX_LISTEN_BACKLOG);
 
-	// replace the waiting connections, which have terminated (e.g. reset by the peer)
-	for (unsigned i = 0; i < m_nBackLog; i++)
+	// wait for any connection of the table, whose handshake is complete, or which
+	// terminated before it was accepted; each one sets m_AcceptEvent, when its
+	// handshake completes or it terminates, so a handshake, which is never
+	// completed, holds up no other one
+	unsigned nIndex;
+	for (;;)
 	{
-		if (m_pTransportLayer->IsTerminated (m_hListenConnection[i]))
-		{
-			m_pTransportLayer->Disconnect (m_hListenConnection[i]);
+		m_AcceptEvent.Clear ();
 
-			m_hListenConnection[i] = m_pTransportLayer->Listen (m_nOwnPort,
-									    m_nProtocol);
-			assert (m_hListenConnection[i] >= 0);
+		// replace the waiting connections, which have terminated (e.g. reset by
+		// the peer, or a handshake that timed out)
+		boolean bReplaced = FALSE;
+		for (unsigned i = 0; i < m_nBackLog; i++)
+		{
+			if (m_pTransportLayer->IsTerminated (m_hListenConnection[i]))
+			{
+				m_pTransportLayer->Disconnect (m_hListenConnection[i]);
+
+				m_hListenConnection[i] = m_pTransportLayer->Listen (m_nOwnPort,
+										    m_nProtocol,
+										    &m_AcceptEvent);
+				assert (m_hListenConnection[i] >= 0);
+
+				bReplaced = TRUE;
+			}
 		}
-	}
 
-	// find a connection, which is already active or will be active first (with lowest handle)
-#define INT_MAX		0x7FFFFFFF
-	int hConnection = INT_MAX;
-	unsigned nIndex = SOCKET_MAX_LISTEN_BACKLOG;
-	for (unsigned i = 0; i < m_nBackLog; i++)
-	{
-		if (m_pTransportLayer->IsConnected (m_hListenConnection[i]))
+		for (nIndex = 0; nIndex < m_nBackLog; nIndex++)
 		{
-			hConnection = m_hListenConnection[i];
-			nIndex = i;
+			if (m_pTransportLayer->IsAcceptable (m_hListenConnection[nIndex]))
+			{
+				break;
+			}
+		}
 
+		if (nIndex < m_nBackLog)
+		{
 			break;
 		}
 
-		if (m_hListenConnection[i] < hConnection)
+		// GetStatus () reports a terminated connection as ready, so a caller,
+		// which asks it first, gets this call back at once
+		if (bReplaced)
 		{
-			hConnection = m_hListenConnection[i];
-			nIndex = i;
+			return 0;
 		}
+
+		m_AcceptEvent.Wait ();
 	}
 
-	assert (0 <= hConnection && hConnection < INT_MAX);
-	assert (nIndex < m_nBackLog);
+	int hConnection = m_hListenConnection[nIndex];
 
 	CSocket *pNewSocket = 0;
 
 	assert (pForeignIP != 0);
 	assert (pForeignPort != 0);
 
-	// blocks until connection is active
+	// returns at once, because the handshake is complete
 	if (m_pTransportLayer->Accept (pForeignIP, pForeignPort, hConnection) >= 0)
 	{
 		pNewSocket = new CSocket (*this, hConnection);
@@ -255,7 +271,8 @@ CSocket *CSocket::Accept (CIPAddress *pForeignIP, u16 *pForeignPort)
 	}
 
 	// replace the returned connection with a new listening one
-	m_hListenConnection[nIndex] = m_pTransportLayer->Listen (m_nOwnPort, m_nProtocol);
+	m_hListenConnection[nIndex] = m_pTransportLayer->Listen (m_nOwnPort, m_nProtocol,
+								 &m_AcceptEvent);
 	assert (m_hListenConnection[nIndex] >= 0);
 
 	return pNewSocket;
@@ -575,9 +592,14 @@ CSocket::TStatus CSocket::GetStatus (void) const
 	{
 		assert (m_nBackLog <= SOCKET_MAX_LISTEN_BACKLOG);
 
+		// ready, when Accept () returns at once: with a connection, whose handshake
+		// is complete, or with 0 after it replaced one, which terminated before it
+		// was accepted, so that a caller, which accepts only when the socket is
+		// ready, keeps every connection of the table
 		for (unsigned i = 0; i < m_nBackLog; i++)
 		{
-			if (m_pTransportLayer->IsConnected (m_hListenConnection[i]))
+			if (   m_pTransportLayer->IsAcceptable (m_hListenConnection[i])
+			    || m_pTransportLayer->IsTerminated (m_hListenConnection[i]))
 			{
 				Status.bRxReady = TRUE;
 

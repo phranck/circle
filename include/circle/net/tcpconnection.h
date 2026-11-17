@@ -69,7 +69,8 @@ public:
 			u16		 nOwnPort);
 	CTCPConnection (CNetConfig	*pNetConfig,		// passive OPEN
 			CNetworkLayer	*pNetworkLayer,
-			u16		 nOwnPort);
+			u16		 nOwnPort,
+			CSynchronizationEvent *pAcceptEvent = 0);	// see m_pAcceptEvent
 	~CTCPConnection (void);
 
 	/// Set receive window for new connections; call before CSocket::Connect() or Listen().
@@ -100,7 +101,8 @@ public:
 
 	boolean IsConnected (void) const;
 	boolean IsTerminated (void) const;
-	
+	boolean IsAcceptable (void) const;	// ESTABLISHED or CLOSE-WAIT
+
 	void Process (void);
 	
 	// returns: -1: invalid packet, 0: not to me, 1: packet consumed
@@ -148,6 +150,8 @@ private:
 private:
 	boolean m_bActiveOpen;
 	boolean m_bMayListenAgain;		// passive open, neither handed out by Accept () nor closed
+	CSynchronizationEvent *m_pAcceptEvent;	// 0 or set while m_bMayListenAgain, when the handshake
+						//	completes or the connection terminates (SetState ())
 	volatile TTCPState m_State;
 
 	volatile int m_nErrno;			// signalize error to the user

@@ -169,6 +169,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 :	CNetConnection (pNetConfig, pNetworkLayer, rForeignIP, nForeignPort, nOwnPort, IPPROTO_TCP),
 	m_bActiveOpen (TRUE),
 	m_bMayListenAgain (FALSE),
+	m_pAcceptEvent (0),
 	m_State (TCPStateClosed),
 	m_nErrno (0),
 	m_TxQueue (TRUE),
@@ -224,10 +225,12 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 
 CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 				CNetworkLayer	*pNetworkLayer,
-				u16		 nOwnPort)
+				u16		 nOwnPort,
+				CSynchronizationEvent *pAcceptEvent)
 :	CNetConnection (pNetConfig, pNetworkLayer, nOwnPort, IPPROTO_TCP),
 	m_bActiveOpen (FALSE),
 	m_bMayListenAgain (TRUE),
+	m_pAcceptEvent (pAcceptEvent),
 	m_State (TCPStateListen),
 	m_nErrno (0),
 	m_TxQueue (TRUE),
@@ -332,35 +335,26 @@ int CTCPConnection::Accept (CIPAddress *pForeignIP, u16 *pForeignPort)
 		return m_nErrno;
 	}
 
-	switch (m_State)
+	// a connection is handed out only once its handshake is complete, so a
+	// handshake, which its peer resets or never completes, never reaches the
+	// caller: one that is reset goes back to LISTEN, and the wait goes on
+	while (   m_State == TCPStateListen
+	       || m_State == TCPStateSynReceived)
 	{
-	case TCPStateSynSent:
-		UNEXPECTED_STATE ();
-		// fall through
-
-	case TCPStateClosed:
-	case TCPStateFinWait1:
-	case TCPStateFinWait2:
-	case TCPStateCloseWait:
-	case TCPStateClosing:
-	case TCPStateLastAck:
-	case TCPStateTimeWait:
-		return -NET_ERROR_CONNECTION_RESET;
-
-	case TCPStateListen:
 		m_Event.Clear ();
 		m_Event.Wait ();
+	}
 
-		// the handshake that woke this task went back to LISTEN before it ran
-		if (m_State == TCPStateListen)
+	if (!IsAcceptable ())
+	{
+		// an active open is never accepted
+		if (m_State == TCPStateSynSent)
 		{
-			return -NET_ERROR_CONNECTION_RESET;
+			UNEXPECTED_STATE ();
 		}
-		break;
 
-	case TCPStateSynReceived:
-	case TCPStateEstablished:
-		break;
+		// a handshake that timed out, or a connection reset before it was accepted
+		return m_nErrno < 0 ? m_nErrno : -NET_ERROR_CONNECTION_RESET;
 	}
 
 	assert (pForeignIP != 0);
@@ -613,6 +607,13 @@ boolean CTCPConnection::IsConnected (void) const
 boolean CTCPConnection::IsTerminated (void) const
 {
 	return m_State == TCPStateClosed;
+}
+
+boolean CTCPConnection::IsAcceptable (void) const
+{
+	// the handshake is complete, and nobody has closed the connection on this side
+	return    m_State == TCPStateEstablished
+	       || m_State == TCPStateCloseWait;
 }
 
 void CTCPConnection::Process (void)
@@ -1255,6 +1256,9 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 				m_nSND_UNA = nSEG_ACK;		// got ACK for SYN
 
 				NEW_STATE (TCPStateEstablished);
+
+				// a task in Accept () or Connect () waits for this
+				m_Event.Set ();
 
 				// next transmission starts with this count
 				m_nRetransmissionCount = MAX_RETRANSMISSIONS;
@@ -2025,6 +2029,15 @@ void CTCPConnection::SetState (TTCPState State)
 	}
 
 	m_State = State;
+
+	// the socket of the listening table, which waits in Accept () for any of its
+	// connections, takes this one now, or replaces it
+	if (   m_bMayListenAgain
+	    && m_pAcceptEvent != 0
+	    && (IsAcceptable () || IsTerminated ()))
+	{
+		m_pAcceptEvent->Set ();
+	}
 }
 
 void CTCPConnection::TimerHandler (unsigned nTimer)
