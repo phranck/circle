@@ -133,6 +133,7 @@ private:
 	void StopTimers (void);			// all of them
 
 	void EnterTimeWait (void);		// or CLOSED, if too many are in TIME-WAIT
+	void ReturnToListen (void);		// from SYN-RECEIVED of a passive open
 	void SetState (TTCPState State);	// counts the connections in TIME-WAIT
 	void TimerHandler (unsigned nTimer);
 	static void TimerStub (TKernelTimerHandle hTimer, void *pParam, void *pContext);

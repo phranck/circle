@@ -925,6 +925,11 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 
 			NEW_STATE (TCPStateSynReceived);
 
+			// the SYN/ACK is repeated until it is acknowledged, and a peer
+			// that never acknowledges it times the connection out
+			m_nRetransmissionCount = MAX_RETRANSMISSIONS;
+			StartTimer (TCPTimerRetransmission, m_RTOCalculator.GetRTO ());
+
 			m_Event.Set ();
 		}
 		break;
@@ -1099,7 +1104,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 				m_TxQueue.Flush ();
 				if (!m_bActiveOpen)
 				{
-					NEW_STATE (TCPStateListen);
+					ReturnToListen ();
 
 					delete pPacket;
 
@@ -1161,8 +1166,8 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 			    && !m_bActiveOpen)
 			{
 				// the peer repeats the SYN that opened this connection, because
-				// it has not got the SYN/ACK yet: send that again and stay in
-				// SYN-RECEIVED (a passive open has no timer that would repeat it)
+				// it has not got the SYN/ACK yet: send that again at once and
+				// stay in SYN-RECEIVED
 				if (nSEG_SEQ == m_nIRS)
 				{
 					SendSegment (TCP_FLAG_SYN | TCP_FLAG_ACK,
@@ -1175,7 +1180,7 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 					return 1;
 				}
 
-				NEW_STATE (TCPStateListen);
+				ReturnToListen ();
 
 				delete pPacket;
 
@@ -1217,6 +1222,12 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 				m_nSND_UNA = nSEG_ACK;		// got ACK for SYN
 
 				NEW_STATE (TCPStateEstablished);
+
+				if (nSEG_ACK == m_nSND_NXT)	// the SYN/ACK needs no repeat
+				{
+					m_bSendSYN = FALSE;
+					StopTimer (TCPTimerRetransmission);
+				}
 
 				// next transmission starts with this count
 				m_nRetransmissionCount = MAX_RETRANSMISSIONS;
@@ -1919,6 +1930,19 @@ void CTCPConnection::EnterTimeWait (void)
 	}
 
 	StartTimer (TCPTimerTimeWait, HZ_TIMEWAIT);
+}
+
+void CTCPConnection::ReturnToListen (void)
+{
+	assert (!m_bActiveOpen);
+
+	// nothing of the given up handshake may act in LISTEN: no repeat of its
+	// SYN/ACK, no timeout
+	StopTimer (TCPTimerRetransmission);
+	m_bSendSYN = FALSE;
+	m_bTimedOut = FALSE;
+
+	NEW_STATE (TCPStateListen);
 }
 
 void CTCPConnection::SetState (TTCPState State)
