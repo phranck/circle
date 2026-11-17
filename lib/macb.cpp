@@ -1030,8 +1030,8 @@ boolean CMACBDevice::SendFrame (const void *pBuffer, unsigned nLength)
 	memcpy (m_tx_buffer + GEM_TX_BUFFER_SIZE * m_tx_head, pBuffer, nLength);
 	DataMemBarrier ();
 
-	// The next descriptor ends the queue, before this one is handed over, so the controller
-	// stops there, and not at a descriptor that was given up after a timeout.
+	// The next descriptor ends the queue before this one is handed over, so the controller
+	// stops there and not at a descriptor that was given up after a timeout.
 	unsigned nNext = m_tx_head + 1;
 	if (nNext == MACB_TX_RING_SIZE)
 	{
@@ -1102,16 +1102,22 @@ void CMACBDevice::tx_reclaim (void)
 		return;
 	}
 
-	// The controller ignores TSTART, while it is still transmitting. If it has read the
-	// descriptor of a frame, before SendFrame() handed it over, it has stopped there with
-	// the frame waiting, so it is started again.
+	unsigned nTicks = CTimer::Get ()->GetClockTicks ();
+
+	// The controller ignores TSTART while it is still transmitting. If it read the
+	// descriptor of a frame before SendFrame() handed the frame over, it stopped there with
+	// the frame waiting, so it is started again. The timeout starts anew, so the frame is
+	// not given up below while the controller is about to send it.
 	if (!(macb_readl (TSR) & MACB_BIT (TGO)))
 	{
 		macb_writel (NCR, macb_readl (NCR) | MACB_BIT (TSTART));
+
+		m_tx_last_ticks = nTicks;
+
+		return;
 	}
 
-	// After a timeout just assume, the oldest frame is completed.
-	unsigned nTicks = CTimer::Get ()->GetClockTicks ();
+	// After a timeout, assume that the oldest frame is completed.
 	if (nTicks - m_tx_last_ticks > MACB_TX_TIMEOUT * (CLOCKHZ / 1000000))
 	{
 		// LOGWARN ("TX timeout");
