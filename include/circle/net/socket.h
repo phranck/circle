@@ -71,6 +71,11 @@ public:
 	/// \param nLength Length of the message
 	/// \param nFlags  MSG_DONTWAIT (non-blocking operation), MSG_MORE (Sender will send more)
 	/// \return Length of the sent message (< 0 on error)
+	/// \note The other tasks run after each segment of the message, so the protocol handlers\n
+	/// keep working while a long message is queued. With MSG_DONTWAIT the whole message is\n
+	/// queued first, and the other tasks run once afterwards. A TCP socket queues a message\n
+	/// sent with MSG_DONTWAIT whole, however much it holds already, so such a caller sends\n
+	/// only while GetStatus() reports bTxReady.
 	int Send (const void *pBuffer, unsigned nLength, int nFlags);
 
 	/// \brief Receive a message from a remote host
@@ -88,6 +93,7 @@ public:
 	/// \param rForeignIP	IP address of host to be sent to (ignored on TCP socket)
 	/// \param nForeignPort	Number of port to be sent to (ignored on TCP socket)
 	/// \return Length of the sent message (< 0 on error)
+	/// \note The other tasks run as with Send().
 	int SendTo (const void *pBuffer, unsigned nLength, int nFlags,
 		    const CIPAddress &rForeignIP, u16 nForeignPort);
 
