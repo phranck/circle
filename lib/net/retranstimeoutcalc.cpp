@@ -55,7 +55,7 @@ CRetransmissionTimeoutCalculator::CRetransmissionTimeoutCalculator (void)
 
 CRetransmissionTimeoutCalculator::~CRetransmissionTimeoutCalculator (void)
 {
-	delete m_SegmentMap;
+	delete [] m_SegmentMap;
 	m_SegmentMap = 0;
 
 	m_pTimer = 0;
@@ -70,9 +70,18 @@ void CRetransmissionTimeoutCalculator::Initialize (u32 nISN, unsigned nMaxWindow
 {
 	assert (nMinMSS >= 2);
 	assert (nMinMSS <= nMaxWindow);
-	m_nSegmentMapSize = nMaxWindow / (nMinMSS / 2) + 1;
-	m_SegmentMap = new TSegmentInfo[m_nSegmentMapSize];
-	assert (m_SegmentMap != 0);
+
+	// a listening connection initializes again for each SYN it takes,
+	// so a map of the right size is kept
+	unsigned nSegmentMapSize = nMaxWindow / (nMinMSS / 2) + 1;
+	if (nSegmentMapSize != m_nSegmentMapSize)
+	{
+		delete [] m_SegmentMap;
+
+		m_nSegmentMapSize = nSegmentMapSize;
+		m_SegmentMap = new TSegmentInfo[m_nSegmentMapSize];
+		assert (m_SegmentMap != 0);
+	}
 
 	m_SpinLock.Acquire ();
 
