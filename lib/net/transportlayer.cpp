@@ -141,10 +141,13 @@ void CTransportLayer::Process (void)
 		if (m_pConnection[i] != 0)
 		{
 			if (!((CNetConnection *) m_pConnection[i])->IsTerminated ())
-			{			
+			{
 				((CNetConnection *) m_pConnection[i])->Process ();
 			}
-			else if (((CNetConnection *) m_pConnection[i])->IsReleased ())
+
+			// deleted in the pass it terminates in, which may be its own Process ()
+			if (   ((CNetConnection *) m_pConnection[i])->IsTerminated ()
+			    && ((CNetConnection *) m_pConnection[i])->IsReleased ())
 			{
 				delete (CNetConnection *) m_pConnection[i];
 				m_pConnection[i] = 0;

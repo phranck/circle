@@ -181,6 +181,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_bFINReceived (FALSE),
 	m_nRetransmissionCount (0),
 	m_bTimedOut (FALSE),
+	m_bTimeWaitRanOut (FALSE),
 	m_pTimer (CTimer::Get ()),
 	m_nSND_WND (TCP_CONFIG_WINDOW),
 	m_nSND_UP (0),
@@ -239,6 +240,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_bFINReceived (FALSE),
 	m_nRetransmissionCount (0),
 	m_bTimedOut (FALSE),
+	m_bTimeWaitRanOut (FALSE),
 	m_pTimer (CTimer::Get ()),
 	m_nSND_WND (TCP_CONFIG_WINDOW),
 	m_nSND_UP (0),
@@ -621,6 +623,16 @@ void CTCPConnection::Process (void)
 		NEW_STATE (TCPStateClosed);
 		m_Event.Set ();
 		m_TxEvent.Set ();
+		return;
+	}
+
+	// the wait in TIME-WAIT, or the FIN timeout in FIN-WAIT-2, ran out; the
+	// timer only marks it (TimerHandler ()), because it may run out while a
+	// segment is handled, which must not find the state changed under it
+	if (m_bTimeWaitRanOut)
+	{
+		m_bTimeWaitRanOut = FALSE;
+		NEW_STATE (TCPStateClosed);
 		return;
 	}
 
@@ -1906,6 +1918,21 @@ void CTCPConnection::StartTimer (unsigned nTimer, unsigned nHZ)
 
 	StopTimer (nTimer);
 
+	// no timer may run in CLOSED (SetState ())
+	if (m_State == TCPStateClosed)
+	{
+		UNEXPECTED_STATE ();
+
+		return;
+	}
+
+	// a wait that starts again drops the end of the one before, which
+	// Process () has not seen yet
+	if (nTimer == TCPTimerTimeWait)
+	{
+		m_bTimeWaitRanOut = FALSE;
+	}
+
 	m_hTimer[nTimer] = m_pTimer->StartKernelTimer (nHZ, TimerStub, (void *) (uintptr) nTimer, this);
 }
 
@@ -2069,7 +2096,9 @@ void CTCPConnection::TimerHandler (unsigned nTimer)
 		break;
 
 	case TCPTimerTimeWait:
-		NEW_STATE (TCPStateClosed);
+		// the interrupt may come while a segment is handled, so Process ()
+		// closes the connection
+		m_bTimeWaitRanOut = TRUE;
 		break;
 
 	case TCPTimerUser:

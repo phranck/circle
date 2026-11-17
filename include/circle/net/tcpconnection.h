@@ -165,7 +165,8 @@ private:
 
 	volatile unsigned m_nRetransmissionCount;
 	volatile boolean m_bTimedOut;		// abort connection and close
-	
+	volatile boolean m_bTimeWaitRanOut;	// TIME-WAIT or the FIN timeout ended, close in Process ()
+
 	CSynchronizationEvent m_Event;
 	CSynchronizationEvent m_TxEvent;	// for pacing transmit
 
