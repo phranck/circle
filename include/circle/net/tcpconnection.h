@@ -138,10 +138,10 @@ private:
 	void TimerHandler (unsigned nTimer);
 	static void TimerStub (TKernelTimerHandle hTimer, void *pParam, void *pContext);
 
-#ifndef NDEBUG
 	void DumpStatus (void);
+	void UnexpectedState (unsigned nLine);		// in every build
+#ifndef NDEBUG
 	TTCPState NewState (TTCPState State, unsigned nLine);
-	void UnexpectedState (unsigned nLine);
 #endif
 
 private:
