@@ -125,7 +125,8 @@ private:
 			     CNetBuffer *pData = 0);
 
 	void ScanOptions (TTCPHeader *pHeader);
-	
+	void SetSendMSS (u16 nMSS);		// and the initial congestion window with it
+
 	u32 CalculateISN (void);
 	
 	void StartTimer (unsigned nTimer, unsigned nHZ);

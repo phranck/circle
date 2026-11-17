@@ -52,6 +52,8 @@
 #define TCP_CONFIG_MSS			(TCP_MSS_R - TCP_HEADER_LEN)
 #define TCP_CONFIG_WINDOW		(TCP_CONFIG_MSS * 10)
 
+#define TCP_DEFAULT_MSS			536	// send MSS without the peer's option, RFC 1122 section 4.2.2.6
+
 #define TCP_CONFIG_TX_THRESHOLD		0x10000	// TX stops, if this number of bytes is queued
 #define TCP_CONFIG_RX_THRESHOLD		0x10000	// kicks RX, if this number of bytes is queued
 
@@ -185,7 +187,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_nRCV_NXT (0),
 	m_nRCV_WND (s_nReceiveWindow),
 	m_nIRS (0),
-	m_nSND_MSS (536),	// RFC 1122 section 4.2.2.6
+	m_nSND_MSS (TCP_DEFAULT_MSS),
 	m_nIW (4 * m_nSND_MSS),
 	m_nCWND (m_nIW),
 	m_nSSThresh (TCP_MAX_WINDOW),
@@ -243,7 +245,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_nRCV_NXT (0),
 	m_nRCV_WND (s_nReceiveWindow),
 	m_nIRS (0),
-	m_nSND_MSS (536),	// RFC 1122 section 4.2.2.6
+	m_nSND_MSS (TCP_DEFAULT_MSS),
 	m_nIW (4 * m_nSND_MSS),
 	m_nCWND (m_nIW),
 	m_nSSThresh (TCP_MAX_WINDOW),
@@ -1852,25 +1854,7 @@ void CTCPConnection::ScanOptions (TTCPHeader *pHeader)
 				if (   (nFlags & TCP_FLAG_SYN)	// accept in SYN segment only
 				    && nMSS >= 10)		// self provided sanity check
 				{
-					m_nSND_MSS = (u16) nMSS;
-
-					m_nMSS = m_nSND_MSS;
-
-					// set initial congestion window (RFC 5681 section 3.1)
-					if (m_nSND_MSS > 2190)
-					{
-						m_nIW = 2 * m_nSND_MSS;
-					}
-					else if (m_nSND_MSS > 1095)
-					{
-						m_nIW = 3 * m_nSND_MSS;
-					}
-					else
-					{
-						m_nIW = 4 * m_nSND_MSS;
-					}
-
-					m_nCWND = m_nIW;
+					SetSendMSS ((u16) nMSS);
 				}
 			}
 			// fall through
@@ -1880,6 +1864,29 @@ void CTCPConnection::ScanOptions (TTCPHeader *pHeader)
 			break;
 		}
 	}
+}
+
+void CTCPConnection::SetSendMSS (u16 nMSS)
+{
+	m_nSND_MSS = nMSS;
+
+	m_nMSS = m_nSND_MSS;
+
+	// set initial congestion window (RFC 5681 section 3.1)
+	if (m_nSND_MSS > 2190)
+	{
+		m_nIW = 2 * m_nSND_MSS;
+	}
+	else if (m_nSND_MSS > 1095)
+	{
+		m_nIW = 3 * m_nSND_MSS;
+	}
+	else
+	{
+		m_nIW = 4 * m_nSND_MSS;
+	}
+
+	m_nCWND = m_nIW;
 }
 
 u32 CTCPConnection::CalculateISN (void)
@@ -1946,13 +1953,25 @@ void CTCPConnection::EnterTimeWait (void)
 
 void CTCPConnection::ReturnToListen (void)
 {
-	assert (m_bMayListenAgain);
+	// only a connection, which nobody took over, may wait for another peer
+	if (!m_bMayListenAgain)
+	{
+		UNEXPECTED_STATE ();
+
+		return;
+	}
 
 	// nothing of the given up handshake may act in LISTEN: no repeat of its
 	// SYN/ACK, no timeout
 	StopTimer (TCPTimerRetransmission);
 	m_bSendSYN = FALSE;
 	m_bTimedOut = FALSE;
+
+	// and nothing of it may reach the next peer: no data its SYN carried, no
+	// MSS its SYN named
+	m_RxQueue.Flush ();
+	m_TxQueue.Flush ();
+	SetSendMSS (TCP_DEFAULT_MSS);
 
 	NEW_STATE (TCPStateListen);
 }
