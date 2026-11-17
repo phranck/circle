@@ -52,7 +52,8 @@ public:
 
 	// closes the connection and gives up the handle, which must not be used afterwards;
 	// a connection is deleted only after it has terminated and its handle was given up;
-	// a call with a handle that names no connection in use is refused and logged
+	// a call with a handle that names no connection in use is refused and logged, a
+	// given up handle only until its slot names a new connection (GetConnection ())
 	int Disconnect (int hConnection);
 
 	int Send (CNetBuffer *pData, int nFlags, int hConnection);

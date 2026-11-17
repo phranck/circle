@@ -545,8 +545,11 @@ CNetConnection::TStatus CTransportLayer::GetStatus (int hConnection) const
 CNetConnection *CTransportLayer::GetConnection (int hConnection, const void *pCaller) const
 {
 	// a handle names its connection from Bind (), Connect () or Listen () until
-	// Disconnect () gives it up; a call with any other handle would reach the
-	// connection of another owner, or none
+	// Disconnect () gives it up; a handle that is negative or names no
+	// connection is refused, and so is a given up one until Process () deletes
+	// its connection: the next Bind (), Connect () or Listen () may hand the
+	// same slot out again, and the handle then names the new connection, which
+	// nothing here can tell from a call of its own owner
 	if (   hConnection < 0
 	    || hConnection >= (int) m_pConnection.GetCount ()
 	    || m_pConnection[hConnection] == 0
