@@ -1224,8 +1224,15 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 		switch (m_State)
 		{
 		case TCPStateSynReceived:
-			if (bwlh (m_nSND_UNA, nSEG_ACK, m_nSND_NXT))
+			// only the ACK of the SYN completes the handshake, an ACK of the ISS
+			// acknowledges nothing (RFC 9293 section 3.10.7.4)
+			if (bwh (m_nSND_UNA, nSEG_ACK, m_nSND_NXT))
 			{
+				// the SYN/ACK needs no repeat; its timer is stopped before
+				// the state changes, so it never runs out in ESTABLISHED
+				StopTimer (TCPTimerRetransmission);
+				m_bSendSYN = FALSE;
+
 				// RFC 1122 section 4.2.2.20 (f)
 				m_nSND_WND = nSEG_WND;
 				m_nSND_WL1 = nSEG_SEQ;
@@ -1236,12 +1243,6 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 				m_nSND_UNA = nSEG_ACK;		// got ACK for SYN
 
 				NEW_STATE (TCPStateEstablished);
-
-				if (nSEG_ACK == m_nSND_NXT)	// the SYN/ACK needs no repeat
-				{
-					m_bSendSYN = FALSE;
-					StopTimer (TCPTimerRetransmission);
-				}
 
 				// next transmission starts with this count
 				m_nRetransmissionCount = MAX_RETRANSMISSIONS;
