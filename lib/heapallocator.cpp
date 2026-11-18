@@ -214,14 +214,16 @@ void *CHeapAllocator::ReAllocate (void *pBlock, size_t nSize)
 
 void *CHeapAllocator::DoReAllocate (void *pBlock, size_t nSize)
 {
+	// pBlock is the heap's own block, which a KASAN hook has already unwrapped,
+	// so the inner functions are called, not the hooks again
 	if (pBlock == 0)
 	{
-		return Allocate (nSize);
+		return DoAllocate (nSize);
 	}
 
 	if (nSize == 0)
 	{
-		Free (pBlock);
+		DoFree (pBlock);
 
 		return 0;
 	}
@@ -234,7 +236,7 @@ void *CHeapAllocator::DoReAllocate (void *pBlock, size_t nSize)
 		return pBlock;
 	}
 
-	void *pNewBlock = Allocate (nSize);
+	void *pNewBlock = DoAllocate (nSize);
 	if (pNewBlock == 0)
 	{
 		return 0;
@@ -242,7 +244,7 @@ void *CHeapAllocator::DoReAllocate (void *pBlock, size_t nSize)
 
 	memcpy (pNewBlock, pBlock, pBlockHeader->nSize);
 
-	Free (pBlock);
+	DoFree (pBlock);
 
 	return pNewBlock;
 }
