@@ -97,6 +97,8 @@ public:
 	/// \param pBlock Memory block to be freed
 	/// \note Blocks, which are bigger than the largest bucket size, go to a free list\n
 	///	  of their own, from which Allocate() takes the smallest one big enough.
+	/// \note A block freed twice, or memory not taken from this heap, is left alone\n
+	///	  and logged as an error, with a stack trace at debug level.
 	void Free (void *pBlock);
 
 #ifdef HEAP_DEBUG
@@ -111,6 +113,10 @@ private:
 	// takes the smallest block with room for nSize bytes off m_pLargeFreeList,
 	// returns 0 if none has room (m_SpinLock must be held)
 	THeapBlockHeader *TakeLargeBlock (size_t nSize);
+
+	// logs a block that Free() leaves alone, with the stack that leads to its caller
+	// (m_SpinLock must not be held, since the logger allocates)
+	void ReportBadFree (void *pBlock);
 
 	friend void *KasanAllocateHook (CHeapAllocator& rHeapAllocator, size_t nSize);
 	friend void *KasanReAllocateHook (CHeapAllocator& rHeapAllocator, void *pBlock, ssize_t nSize);

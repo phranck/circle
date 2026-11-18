@@ -18,6 +18,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 #include <circle/heapallocator.h>
+#include <circle/debug.h>
 #include <circle/logger.h>
 #include <circle/util.h>
 #include <assert.h>
@@ -264,15 +265,27 @@ void CHeapAllocator::DoFree (void *pBlock)
 
 	THeapBlockHeader *pBlockHeader =
 		(THeapBlockHeader *) ((uintptr) pBlock - sizeof (THeapBlockHeader));
-	assert (pBlockHeader->nMagic == HEAP_BLOCK_ALLOC_MAGIC);
+
+	m_SpinLock.Acquire ();
+
+	// a block freed twice, or memory this heap did not give, would go onto a free
+	// list a second time or at all: a later allocation would take it while it is in
+	// use, or a search would follow the list around for good, so it is left alone
+	if (pBlockHeader->nMagic != HEAP_BLOCK_ALLOC_MAGIC)
+	{
+		m_SpinLock.Release ();
+
+		ReportBadFree (pBlock);
+
+		return;
+	}
+
 	pBlockHeader->nMagic = HEAP_BLOCK_FREE_MAGIC;
 
 	for (THeapBlockBucket *pBucket = m_Bucket; pBucket->nSize > 0; pBucket++)
 	{
 		if (pBlockHeader->nSize == pBucket->nSize)
 		{
-			m_SpinLock.Acquire ();
-
 			pBlockHeader->pNext = pBucket->pFreeList;
 			pBucket->pFreeList = pBlockHeader;
 
@@ -286,12 +299,20 @@ void CHeapAllocator::DoFree (void *pBlock)
 		}
 	}
 
-	m_SpinLock.Acquire ();
-
 	pBlockHeader->pNext = m_pLargeFreeList;
 	m_pLargeFreeList = pBlockHeader;
 
 	m_SpinLock.Release ();
+}
+
+void CHeapAllocator::ReportBadFree (void *pBlock)
+{
+	// the return addresses on the stack lead to the code that freed the block
+	DebugStackTrace ((const uintptr *) __builtin_frame_address (0), m_pHeapName);
+
+	CLogger::Get ()->Write (m_pHeapName, LogError,
+				"Block 0x%lX freed twice or not taken from this heap",
+				(unsigned long) (uintptr) pBlock);
 }
 
 #ifdef HEAP_DEBUG
