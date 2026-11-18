@@ -93,14 +93,19 @@ public:
 	/// \param nSize  New block size
 	/// \return Pointer to new block (block contents has been copied, if the block has moved)
 	/// \note A block that was freed before, or memory not taken from this heap, returns 0\n
-	///	  and is logged as for Free().
+	///	  and is logged as for Free(), with the same limits. Where the heap has given the\n
+	///	  block to another request since, this reallocates that request's block.
 	void *ReAllocate (void *pBlock, size_t nSize);
 
 	/// \param pBlock Memory block to be freed
 	/// \note Blocks, which are bigger than the largest bucket size, go to a free list\n
 	///	  of their own, from which Allocate() takes the smallest one big enough.
 	/// \note A block freed twice, or memory not taken from this heap, is left alone\n
-	///	  and logged as an error, with a stack trace at debug level.
+	///	  and logged as an error, with a stack trace at debug level. Only the header\n
+	///	  in front of the block tells whether it is allocated, so where the heap has\n
+	///	  given the block to another request since, a second Free() frees that\n
+	///	  request's block. With KASan, the hooks in kasan.cpp still poison the shadow\n
+	///	  memory of a refused block, over a size read from in front of it.
 	void Free (void *pBlock);
 
 #ifdef HEAP_DEBUG
