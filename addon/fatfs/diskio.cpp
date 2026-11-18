@@ -31,8 +31,11 @@
  * and each further one reads twice as much, up to 64 KByte. Reads that the
  * buffer holds are served from it. The buffer takes 64 KByte of heap for
  * each drive that reads ahead. It is allocated at the first read-ahead and
- * kept. If the heap cannot give it, a warning says so, and the drive reads
- * without read-ahead until it is initialized again, which every mount does.
+ * kept. Where the heap returns 0 for it, which Circle's heap does with
+ * STDLIB_SUPPORT 3 or 4 and for a heap without a reserve, a warning names
+ * the drive, and the drive reads without read-ahead until it is initialized
+ * again, which every mount does. With STDLIB_SUPPORT below 3 the low heap
+ * halts the system instead, as for every other allocation.
  *
  * Some access patterns get slower with this option. A run of two small
  * reads costs one small read and one read-ahead instead of two small reads,
@@ -150,9 +153,13 @@ public:
 	/* Updates each written sector that the buffer holds. */
 	void Written (const u8 *pData, u64 ullSector, unsigned nCount);
 
-	/* Forgets the buffer and the previous read, and tries to allocate the
-	 * buffer again if the heap could not give it. */
+	/* Forgets the buffer and the previous read. */
 	void Invalidate (void);
+
+	/* Forgets the buffer and the previous read for a new medium, and lets
+	 * the next read-ahead try again to allocate the buffer if the heap could
+	 * not give it. */
+	void Initialize (void);
 
 private:
 	/* Returns TRUE if the buffer holds all of the sectors. */
@@ -226,8 +233,11 @@ boolean CReadAhead::Read (u8 *pOut, u64 ullSector, unsigned nCount, CDevice *pDe
 			{
 				m_bNoBuffer = TRUE;
 
-				LOGWARN ("Drive %u reads without read-ahead: no memory for its buffer",
-					 (unsigned) pdrv);
+				/* The heap is short, so the message is built without it. */
+				char Message[80];
+				strcpy (Message, "No memory for the read-ahead of ");
+				strcat (Message, s_pVolumeName[pdrv]);
+				CLogger::Get ()->WriteNoAlloc (From, LogWarning, Message);
 
 				return FALSE;
 			}
@@ -285,6 +295,12 @@ void CReadAhead::Invalidate (void)
 	m_nCount = 0;
 	m_bPrevious = FALSE;
 	m_bFailed = FALSE;
+}
+
+void CReadAhead::Initialize (void)
+{
+	Invalidate ();
+
 	m_bNoBuffer = FALSE;
 }
 
@@ -368,7 +384,7 @@ DSTATUS disk_initialize (
 
 #ifdef FATFS_READ_AHEAD
 	/* The drive can hold another medium than before. */
-	s_ReadAhead[pdrv].Invalidate ();
+	s_ReadAhead[pdrv].Initialize ();
 #endif
 
 	s_pVolume[pdrv] = CDeviceNameService::Get ()->GetDevice (s_pVolumeName[pdrv], TRUE);
