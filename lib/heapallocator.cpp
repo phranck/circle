@@ -149,10 +149,12 @@ void *CHeapAllocator::DoAllocate (size_t nSize)
 							 : (u32) (pNextBlock - pBlockHeader->Data);
 	}
 
-	m_SpinLock.Release ();
-
+	// marked under the lock, so that DoFree() on another core sees the block either
+	// free or allocated, and never links it to a list that this cuts off again
 	pBlockHeader->nMagic = HEAP_BLOCK_ALLOC_MAGIC;
 	pBlockHeader->pNext = 0;
+
+	m_SpinLock.Release ();
 
 	void *pResult = pBlockHeader->Data;
 	assert (((uintptr) pResult & HEAP_ALIGN_MASK) == 0);
@@ -230,7 +232,20 @@ void *CHeapAllocator::DoReAllocate (void *pBlock, size_t nSize)
 
 	THeapBlockHeader *pBlockHeader =
 		(THeapBlockHeader *) ((uintptr) pBlock - sizeof (THeapBlockHeader));
-	assert (pBlockHeader->nMagic == HEAP_BLOCK_ALLOC_MAGIC);
+
+	m_SpinLock.Acquire ();
+	boolean bAllocated = pBlockHeader->nMagic == HEAP_BLOCK_ALLOC_MAGIC;
+	m_SpinLock.Release ();
+
+	// a block that was freed may be on a free list already, and memory this heap
+	// did not give has no size to copy, so neither is reallocated
+	if (!bAllocated)
+	{
+		ReportBadBlock (pBlock, "Reallocation");
+
+		return 0;
+	}
+
 	if (pBlockHeader->nSize >= nSize)
 	{
 		return pBlock;
@@ -277,7 +292,7 @@ void CHeapAllocator::DoFree (void *pBlock)
 	{
 		m_SpinLock.Release ();
 
-		ReportBadFree (pBlock);
+		ReportBadBlock (pBlock, "Free");
 
 		return;
 	}
@@ -307,14 +322,14 @@ void CHeapAllocator::DoFree (void *pBlock)
 	m_SpinLock.Release ();
 }
 
-void CHeapAllocator::ReportBadFree (void *pBlock)
+void CHeapAllocator::ReportBadBlock (const void *pBlock, const char *pWhat)
 {
-	// the return addresses on the stack lead to the code that freed the block
+	// the return addresses on the stack lead to the code that passed the block
 	DebugStackTrace ((const uintptr *) __builtin_frame_address (0), m_pHeapName);
 
 	CLogger::Get ()->Write (m_pHeapName, LogError,
-				"Block 0x%lX freed twice or not taken from this heap",
-				(unsigned long) (uintptr) pBlock);
+				"%s refused: block 0x%lX was freed before or is not from this heap",
+				pWhat, (unsigned long) (uintptr) pBlock);
 }
 
 #ifdef HEAP_DEBUG

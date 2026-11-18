@@ -92,6 +92,8 @@ public:
 	/// \param pBlock Memory block to be reallocated
 	/// \param nSize  New block size
 	/// \return Pointer to new block (block contents has been copied, if the block has moved)
+	/// \note A block that was freed before, or memory not taken from this heap, returns 0\n
+	///	  and is logged as for Free().
 	void *ReAllocate (void *pBlock, size_t nSize);
 
 	/// \param pBlock Memory block to be freed
@@ -114,9 +116,9 @@ private:
 	// returns 0 if none has room (m_SpinLock must be held)
 	THeapBlockHeader *TakeLargeBlock (size_t nSize);
 
-	// logs a block that Free() leaves alone, with the stack that leads to its caller
-	// (m_SpinLock must not be held, since the logger allocates)
-	void ReportBadFree (void *pBlock);
+	// logs a block that Free() or ReAllocate() refuses, pWhat naming which, with the
+	// stack that leads to its caller (m_SpinLock must not be held, since the logger allocates)
+	void ReportBadBlock (const void *pBlock, const char *pWhat);
 
 	friend void *KasanAllocateHook (CHeapAllocator& rHeapAllocator, size_t nSize);
 	friend void *KasanReAllocateHook (CHeapAllocator& rHeapAllocator, void *pBlock, ssize_t nSize);
