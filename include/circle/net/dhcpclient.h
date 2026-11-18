@@ -68,8 +68,9 @@ private:
 
 	// copies the value of a Domain Name option (15), nLength bytes, to pDomainName, which
 	// has room for NET_DOMAIN_NAME_MAX+1 characters; NUL bytes at its end and one dot after
-	// its last label are dropped; the rest must be labels of 1 to 63 letters, digits and
-	// inner hyphens, joined by dots, otherwise the result is FALSE and an empty string
+	// its last label are dropped; nothing left is no name, an empty string and TRUE; otherwise
+	// the rest must be a domain name, as CNetConfig::IsDomainName() checks, or the result is
+	// FALSE and an empty string
 	static boolean ReadDomainName (const u8 *pValue, unsigned nLength, char *pDomainName);
 
 	static u32 GetUnaligned (const void *pPointer);

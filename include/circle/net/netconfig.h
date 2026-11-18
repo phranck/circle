@@ -24,12 +24,20 @@
 #include <circle/types.h>
 
 #define NET_DOMAIN_NAME_MAX	253	// characters, as the DNS limits a name
+#define NET_DOMAIN_LABEL_MAX	63	// characters, as the DNS limits a label
 
 class CNetConfig
 {
 public:
 	CNetConfig (void);
 	~CNetConfig (void);
+
+	/// \param pName  Characters to check (need not end with a NUL)
+	/// \param nLength Number of characters
+	/// \return TRUE if they are a domain name: labels of 1 to NET_DOMAIN_LABEL_MAX letters,\n
+	///	    digits and inner hyphens, joined by dots, up to NET_DOMAIN_NAME_MAX characters,\n
+	///	    without a dot at the end
+	static boolean IsDomainName (const char *pName, unsigned nLength);
 
 	void Reset (void);
 
@@ -40,9 +48,11 @@ public:
 	void SetDefaultGateway (u32 nAddress);
 	void SetDNSServer (u32 nAddress);
 	void SetNTPServer (u32 nAddress);
-	/// \param pDomainName Domain name supplied by DHCP, or an empty string\n
-	///	   (up to NET_DOMAIN_NAME_MAX characters, the value is copied)
-	void SetDomainName (const char *pDomainName);
+	/// \param pDomainName Domain name to keep, or an empty string to clear it\n
+	///	   (the value is copied, and may be the one GetDomainName() returns)
+	/// \return FALSE if it is no domain name (see IsDomainName(), which refuses a dot at\n
+	///	    the end as well), which clears the name and is logged with the caller's address
+	boolean SetDomainName (const char *pDomainName);
 
 	void SetIPAddress (const u8 *pAddress);
 	void SetNetMask (const u8 *pNetMask);
@@ -58,7 +68,8 @@ public:
 	const CIPAddress *GetDNSServer (void) const;
 	const CIPAddress *GetBroadcastAddress (void) const;		// directed broadcast
 	const CIPAddress *GetNTPServer (void) const;
-	/// \return Domain name supplied by DHCP, or an empty string if none is set.
+	/// \return Domain name supplied by DHCP or set with SetDomainName(), or an empty string\n
+	///	    if none is set
 	const char *GetDomainName (void) const;
 
 private:

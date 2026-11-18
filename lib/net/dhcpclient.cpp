@@ -104,8 +104,6 @@ PACKED;
 
 static const char FromDHCPClient[] = "dhcp";
 
-#define DOMAIN_LABEL_MAX	63		// characters, as the DNS limits a label
-
 #define MAX_TRIES	4
 const unsigned CDHCPClient::s_TimeoutHZ[MAX_TRIES] = {4*HZ, 8*HZ, 16*HZ, 32*HZ};
 
@@ -745,9 +743,13 @@ void CDHCPClient::ScanOptions (const u8 *pOptions, unsigned nOptionsSize)
 			goto Skip;
 
 		case DHCP_OPTION_DOMAINNAME:
-			if ((u8 *) pOption+pOption->Len+2 <= pOptionsEnd)
+			if (   (u8 *) pOption+pOption->Len+2 <= pOptionsEnd
+			    && !ReadDomainName (pOption->Value, pOption->Len, m_RxDomainName))
 			{
-				ReadDomainName (pOption->Value, pOption->Len, m_RxDomainName);
+				// the value comes from the network, so only its length is logged
+				CLogger::Get ()->Write (FromDHCPClient, LogWarning,
+							"Ignoring domain name option of length %u: not a valid name",
+							(unsigned) pOption->Len);
 			}
 			goto Skip;
 
@@ -909,45 +911,13 @@ boolean CDHCPClient::ReadDomainName (const u8 *pValue, unsigned nLength, char *p
 		nLength--;
 	}
 
-	if (nLength == 0 || nLength > NET_DOMAIN_NAME_MAX)
+	// nothing left is no name, as when the option is missing
+	if (nLength == 0)
 	{
-		return FALSE;
+		return TRUE;
 	}
 
-	unsigned nLabelLength = 0;
-	for (unsigned i = 0; i < nLength; i++)
-	{
-		char chChar = (char) pValue[i];
-		if (chChar == '.')
-		{
-			if (nLabelLength == 0 || pValue[i-1] == '-')
-			{
-				return FALSE;
-			}
-
-			nLabelLength = 0;
-
-			continue;
-		}
-
-		boolean bLetterOrDigit =    (chChar >= 'a' && chChar <= 'z')
-					 || (chChar >= 'A' && chChar <= 'Z')
-					 || (chChar >= '0' && chChar <= '9');
-		if (   !bLetterOrDigit
-		    && !(chChar == '-' && nLabelLength > 0))
-		{
-			return FALSE;
-		}
-
-		if (++nLabelLength > DOMAIN_LABEL_MAX)
-		{
-			return FALSE;
-		}
-	}
-
-	// the last label must not be empty (a second dot at the end) or end with a hyphen
-	if (   nLabelLength == 0
-	    || pValue[nLength-1] == '-')
+	if (!CNetConfig::IsDomainName ((const char *) pValue, nLength))
 	{
 		return FALSE;
 	}

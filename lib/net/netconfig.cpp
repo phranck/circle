@@ -18,7 +18,11 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 #include <circle/net/netconfig.h>
+#include <circle/logger.h>
+#include <circle/util.h>
 #include <assert.h>
+
+static const char FromNetConfig[] = "netcfg";
 
 CNetConfig::CNetConfig (void)
 :	m_bUseDHCP (TRUE)
@@ -77,17 +81,74 @@ void CNetConfig::SetNTPServer (u32 nAddress)
 	m_NTPServer.Set (nAddress);
 }
 
-void CNetConfig::SetDomainName (const char *pDomainName)
+boolean CNetConfig::SetDomainName (const char *pDomainName)
 {
 	assert (pDomainName != 0);
 
-	unsigned i = 0;
-	while (i < NET_DOMAIN_NAME_MAX && pDomainName[i] != '\0')
+	// one character more than a name may have shows a name that is too long
+	unsigned nLength = strnlen (pDomainName, NET_DOMAIN_NAME_MAX+1);
+	if (   nLength > 0
+	    && !IsDomainName (pDomainName, nLength))
 	{
-		m_DomainName[i] = pDomainName[i];
-		i++;
+		m_DomainName[0] = '\0';
+
+		CLogger::Get ()->Write (FromNetConfig, LogWarning,
+					"Domain name refused: not a valid name (caller 0x%lX)",
+					(unsigned long) (uintptr) __builtin_return_address (0));
+
+		return FALSE;
 	}
-	m_DomainName[i] = '\0';
+
+	// pDomainName may point into m_DomainName, as GetDomainName() returns it
+	memmove (m_DomainName, pDomainName, nLength);
+	m_DomainName[nLength] = '\0';
+
+	return TRUE;
+}
+
+boolean CNetConfig::IsDomainName (const char *pName, unsigned nLength)
+{
+	assert (pName != 0);
+
+	if (nLength == 0 || nLength > NET_DOMAIN_NAME_MAX)
+	{
+		return FALSE;
+	}
+
+	unsigned nLabelLength = 0;
+	for (unsigned i = 0; i < nLength; i++)
+	{
+		char chChar = pName[i];
+		if (chChar == '.')
+		{
+			if (nLabelLength == 0 || pName[i-1] == '-')
+			{
+				return FALSE;
+			}
+
+			nLabelLength = 0;
+
+			continue;
+		}
+
+		boolean bLetterOrDigit =    (chChar >= 'a' && chChar <= 'z')
+					 || (chChar >= 'A' && chChar <= 'Z')
+					 || (chChar >= '0' && chChar <= '9');
+		if (   !bLetterOrDigit
+		    && !(chChar == '-' && nLabelLength > 0))
+		{
+			return FALSE;
+		}
+
+		if (++nLabelLength > NET_DOMAIN_LABEL_MAX)
+		{
+			return FALSE;
+		}
+	}
+
+	// the last label must not be empty (a dot at the end) or end with a hyphen
+	return    nLabelLength > 0
+	       && pName[nLength-1] != '-';
 }
 
 void CNetConfig::SetIPAddress (const u8 *pAddress)
