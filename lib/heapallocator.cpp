@@ -257,7 +257,14 @@ void *CHeapAllocator::DoReAllocate (void *pBlock, size_t nSize)
 		return 0;
 	}
 
+#ifdef KASAN_SUPPORTED
+	// with KASan, the shadow memory marks the old block, and a new one reused from
+	// a free list, as not accessible, so the checking memcpy() of kasan.cpp would
+	// report the copy
+	__kasan_memcpy (pNewBlock, pBlock, pBlockHeader->nSize);
+#else
 	memcpy (pNewBlock, pBlock, pBlockHeader->nSize);
+#endif
 
 	DoFree (pBlock);
 

@@ -59,16 +59,6 @@ typedef char int8_t;
 
 void __kasan_printf (const char *pFormat, ...);
 
-extern "C"
-{
-    // The real memory functions implemented in Circle, called from
-    // the corresponding KASan wrappers. These are not instrumented
-    // by KASan, as they are directly implemented in assembly
-    // in util_fast.S.
-    void *__kasan_memset (void *pBuffer, int nValue, size_t nLength);
-    void *__kasan_memcpy (void *pDest, const void *pSrc, size_t nLength);
-}
-
 namespace
 {
     uintptr g_shadow_mem_end;

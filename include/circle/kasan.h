@@ -23,6 +23,13 @@ class CHeapAllocator;
 void *KasanAllocateHook (CHeapAllocator& rHeapAllocator, size_t nSize);
 void *KasanReAllocateHook (CHeapAllocator& rHeapAllocator, void *pBlock, ssize_t nSize);
 void KasanFreeHook (CHeapAllocator& rHeapAllocator, void *pBlock);
+
+// The memset() and memcpy() of util_fast.S, which KASan does not instrument.
+// kasan.cpp writes the shadow memory with them and calls them from its checking
+// wrappers, and CHeapAllocator moves a block, which holds KASan's redzones,
+// with __kasan_memcpy().
+extern "C" void *__kasan_memset (void *pBuffer, int nValue, size_t nLength);
+extern "C" void *__kasan_memcpy (void *pDest, const void *pSrc, size_t nLength);
 #endif
 
 #endif
