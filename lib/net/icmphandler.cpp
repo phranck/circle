@@ -214,7 +214,9 @@ void CICMPHandler::Process (void)
 void CICMPHandler::DestinationUnreachable (unsigned nCode, CNetBuffer *pReturnedIPPacket)
 {
 	assert (pReturnedIPPacket != 0);
+#ifndef NDEBUG
 	unsigned nLength = pReturnedIPPacket->GetLength ();
+#endif
 	assert (nLength > sizeof (TIPHeader));
 	TIPHeader *pIPHeader = (TIPHeader *) pReturnedIPPacket->GetPtr ();
 
