@@ -75,7 +75,7 @@ public:
 	/// \param nCount	Count of the counter, any value
 	/// \param nFrequency	Counts per second of the counter, from 1 up to 2^64 / CLOCKHZ
 	/// \return nCount * CLOCKHZ / nFrequency rounded down, exact modulo 2^64 for every count
-	/// \note The product nCount * CLOCKHZ leaves 64 bits from a count of 2^64 / CLOCKHZ on,
+	/// \note The product nCount * CLOCKHZ overflows 64 bits from a count of 2^64 / CLOCKHZ on,
 	///	  which a 54 MHz counter reaches after less than four days. Whole seconds and
 	///	  the rest of a second are converted apart. The product of the rest stays below
 	///	  nFrequency * CLOCKHZ, which fits 64 bits for every nFrequency in its range.
