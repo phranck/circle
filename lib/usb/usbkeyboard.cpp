@@ -242,11 +242,11 @@ void CUSBKeyboardDevice::ReportHandler (const u8 *pReport, unsigned nReportSize)
 		return;
 	}
 
-	// report released keys
+	// report released keys, an error usage is no key
 	for (unsigned i = 2; i < USBKEYB_REPORT_SIZE; i++)
 	{
 		u8 ucKeyCode = m_LastReport[i];
-		if (   ucKeyCode != 0
+		if (   ucKeyCode > USBKEYB_ERROR_LAST
 		    && !FindByte (pReport+2, ucKeyCode, USBKEYB_REPORT_SIZE-2))
 		{
 			m_Behaviour.KeyReleased (ucKeyCode);
@@ -257,7 +257,7 @@ void CUSBKeyboardDevice::ReportHandler (const u8 *pReport, unsigned nReportSize)
 	for (unsigned i = 2; i < USBKEYB_REPORT_SIZE; i++)
 	{
 		u8 ucKeyCode = pReport[i];
-		if (   ucKeyCode != 0
+		if (   ucKeyCode > USBKEYB_ERROR_LAST
 		    && !FindByte (m_LastReport+2, ucKeyCode, USBKEYB_REPORT_SIZE-2))
 		{
 			m_Behaviour.KeyPressed (ucKeyCode);

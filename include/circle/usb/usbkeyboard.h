@@ -31,12 +31,16 @@
 // a keyboard puts this usage in all key fields of a report, when more keys are down than the
 // report can hold (ErrorRollOver); the modifier byte still holds the modifiers
 #define USBKEYB_ERROR_ROLL_OVER	0x01
+// the last of the usages, which report an error and no key (ErrorRollOver, POSTFail,
+// ErrorUndefined); key codes start above it
+#define USBKEYB_ERROR_LAST	0x03
 
 // The raw handler is called when the keyboard sends a status report (on status change and/or continously).
+// Each byte of RawKeys holds a key code, 0, or an error usage up to USBKEYB_ERROR_LAST.
 typedef void TKeyStatusHandlerRaw (unsigned char	ucModifiers,	// see usbhid.h
-				   const unsigned char	RawKeys[6]);	// key code or 0 in each byte
+				   const unsigned char	RawKeys[6]);
 typedef void TKeyStatusHandlerRawEx (unsigned char	ucModifiers,	// see usbhid.h
-				   const unsigned char	RawKeys[6], void* arg);	// key code or 0 in each byte
+				   const unsigned char	RawKeys[6], void* arg);
 
 class CUSBKeyboardDevice : public CUSBHIDDevice
 {
