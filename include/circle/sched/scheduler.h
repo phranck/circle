@@ -37,7 +37,9 @@ enum TTaskFlags		///< for EnumerateTasks()
 typedef void TSchedulerTaskHandler (CTask *pTask);
 
 #define MAX_SECONDARY_CORE_CALLS	0x7FFFFFFF	///< CScheduler::GetSecondaryCoreCalls() stops here
+#ifndef MAX_SECONDARY_CORE_CALLERS
 #define MAX_SECONDARY_CORE_CALLERS	16		///< return addresses of these calls that are logged
+#endif
 
 /// \note This scheduler uses the round-robin policy, without priorities.
 
@@ -62,8 +64,8 @@ public:
 	void usSleep (unsigned nMicroSeconds);
 
 	/// \return Number of calls of Yield(), Sleep(), MsSleep() and usSleep()\n
-	///	    on a secondary core, and of waits there for a CSynchronizationEvent,\n
-	///	    which is already set
+	///	    on a secondary core, and of waits there for a CSynchronizationEvent\n
+	///	    that is already set
 	/// \note The tasks run on core 0 only, so these calls do not switch the task.\n
 	///	  The first call from each return address is logged with its core,\n
 	///	  for up to MAX_SECONDARY_CORE_CALLERS different return addresses.
@@ -131,11 +133,10 @@ private:
 	friend class CTask;
 
 	// pCaller is the return address of the wait. A secondary core has no task
-	// that could be blocked, so a call there is a system panic, unless *pState
-	// is set, where the wait would not block and is counted.
+	// that could be blocked, so a call there is a system panic.
 	// pState is an optional pointer to a synchronization event variable, which is
 	// atomically checked with the blocking operation. When is specified and is set,
-	// the method returns silently.
+	// the method returns silently, on a secondary core after counting the call.
 	boolean BlockTask (CTask **ppWaitListHead, unsigned nMicroSeconds,
 			    const void *pCaller, const volatile boolean *pState = 0);
 	void WakeTasks (CTask **ppWaitListHead); // can be called from interrupt context

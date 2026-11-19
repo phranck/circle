@@ -43,7 +43,7 @@ CMutex::~CMutex (void)
 
 void CMutex::Acquire (void)
 {
-    const void *pCaller = __builtin_return_address (0);
+    const void *pCaller = __builtin_return_address(0);
     CTask* pTask = CScheduler::Get()->GetCurrentTask(pCaller);
 
     while (true)
@@ -65,7 +65,7 @@ void CMutex::Acquire (void)
 
 boolean CMutex::TryAcquire (void)
 {
-    CTask* pTask = CScheduler::Get()->GetCurrentTask(__builtin_return_address (0));
+    CTask* pTask = CScheduler::Get()->GetCurrentTask(__builtin_return_address(0));
 
     if (m_pOwningTask == nullptr)
     {
@@ -84,9 +84,9 @@ boolean CMutex::TryAcquire (void)
 void CMutex::Release (void)
 {
     // asked in every build, a secondary core owns no mutex
-    CTask* pTask = CScheduler::Get()->GetCurrentTask(__builtin_return_address (0));
+    CTask* pTask = CScheduler::Get()->GetCurrentTask(__builtin_return_address(0));
     assert(m_pOwningTask == pTask);
-    (void) pTask;	// to suppress the warning with NDEBUG
+    (void) pTask;   // to suppress the warning with NDEBUG
 
     m_iReentrancyCount--;
     if (m_iReentrancyCount == 0)

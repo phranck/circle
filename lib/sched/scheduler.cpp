@@ -119,7 +119,9 @@ void CScheduler::MsSleep (unsigned nMilliSeconds)
 
 void CScheduler::usSleep (unsigned nMicroSeconds)
 {
-	usSleepOnCore (nMicroSeconds, CountSecondaryCoreCall ("usSleep", __builtin_return_address (0)));
+	boolean bSecondaryCore = CountSecondaryCoreCall ("usSleep", __builtin_return_address (0));
+
+	usSleepOnCore (nMicroSeconds, bSecondaryCore);
 }
 
 void CScheduler::usSleepOnCore (unsigned nMicroSeconds, boolean bSecondaryCore)
@@ -354,7 +356,7 @@ boolean CScheduler::BlockTask (CTask **ppWaitListHead, unsigned nMicroSeconds,
 				const void *pCaller, const volatile boolean *pState)
 {
 	// m_pCurrent is a task of core 0, it must not be blocked from elsewhere. A wait
-	// for an event, which is already set, does not block and returns as on core 0.
+	// for an event that is already set does not block and returns as on core 0.
 	// It is counted, because the same wait is a system panic, when the event is clear.
 	if (   pState != 0
 	    && *pState

@@ -101,6 +101,11 @@ void CTask::Terminate (void)
 
 void CTask::WaitForTermination (void)
 {
+	// callable from another task only, and a secondary core runs no task.
+	// There core 0 could also delete this task, while the task list is read.
+	CScheduler::Get ()->PanicOnSecondaryCore ("WaitForTermination",
+						  __builtin_return_address (0));
+
 	// Before accessing any of our member variables
 	// make sure this task object hasn't been deleted by 
 	// checking it's still registered with the scheduler
@@ -109,8 +114,7 @@ void CTask::WaitForTermination (void)
 		return;
 	}
 
-	// a wait on a secondary core names the caller of this method
-	m_Event.Wait (__builtin_return_address (0));
+	m_Event.Wait ();
 }
 
 void CTask::SetName (const char *pName)
