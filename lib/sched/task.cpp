@@ -20,25 +20,32 @@
 #include <circle/sched/task.h>
 #include <circle/sched/scheduler.h>
 #include <circle/memory.h>
+#include <circle/logger.h>
 #include <circle/util.h>
 #include <assert.h>
 
+LOGMODULE ("task");
+
+// The public constructors pass their own return address on, so that a panic names
+// the constructor that called them, which is the one of the class derived from
+// CTask, and not the delegating constructor.
+
 CTask::CTask (unsigned nStackSize, boolean bCreateSuspended)
-:	CTask (nStackSize, bCreateSuspended, FALSE)
+:	CTask (nStackSize, bCreateSuspended, FALSE, __builtin_return_address (0))
 {
 }
 
 CTask::CTask (unsigned nStackSize, boolean bCreateSuspended, TTaskCreation)
-:	CTask (nStackSize, bCreateSuspended, TRUE)
+:	CTask (nStackSize, bCreateSuspended, TRUE, __builtin_return_address (0))
 {
 }
 
-CTask::CTask (unsigned nStackSize, boolean bCreateSuspended, boolean bChecked)
+CTask::CTask (unsigned nStackSize, boolean bCreateSuspended, boolean bChecked,
+	      const void *pCaller)
 :	m_State (bCreateSuspended ? TaskStateNew : TaskStateReady),
 	m_bSuspended (FALSE),
 	m_nStackSize (nStackSize),
 	m_pStack (0),
-	m_bCheckedStack (bChecked),
 	m_pWaitListNext (0)
 {
 	for (unsigned i = 0; i < TASK_USER_DATA_SLOTS; i++)
@@ -54,20 +61,20 @@ CTask::CTask (unsigned nStackSize, boolean bCreateSuspended, boolean bChecked)
 #else
 		assert ((m_nStackSize & 15) == 0);
 #endif
-		if (bChecked)
+		// HeapAllocate () may return 0, where a check after new could be removed by
+		// the compiler. A checked stack does not take the heap's reserve, so that
+		// the caller learns that it is missing, instead of the system halting.
+		m_pStack = (u8 *) CMemorySystem::HeapAllocate (m_nStackSize, HEAP_DEFAULT_NEW, bChecked);
+		if (m_pStack == 0)
 		{
-			// HeapAllocate () returns 0 where new must not
-			m_pStack = (u8 *) CMemorySystem::HeapAllocate (m_nStackSize, HEAP_DEFAULT_NEW);
-			if (m_pStack == 0)
+			if (!bChecked)
 			{
-				m_State = TaskStateUnknown;
-				return;
+				LOGPANIC ("No stack for new task (caller 0x%lX)",
+					  (unsigned long) (uintptr) pCaller);
 			}
-		}
-		else
-		{
-			m_pStack = new u8[m_nStackSize];
-			assert (m_pStack != 0);
+
+			m_State = TaskStateUnknown;
+			return;
 		}
 
 		InitializeRegs ();
@@ -86,15 +93,11 @@ CTask::~CTask (void)
 		m_State = TaskStateUnknown;
 	}
 
-	if (!m_bCheckedStack)
-	{
-		delete [] m_pStack;
-	}
-	else if (m_pStack != 0)
+	if (m_pStack != 0)
 	{
 		CMemorySystem::HeapFree (m_pStack);
+		m_pStack = 0;
 	}
-	m_pStack = 0;
 }
 
 void CTask::Start (void)

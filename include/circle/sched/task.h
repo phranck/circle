@@ -51,16 +51,15 @@ class CTask	/// Overload this class, define the Run() method, and call new on it
 public:
 	/// \param nStackSize Stack size for this task (0 used internally for the main task)
 	/// \param bCreateSuspended Set to TRUE, if the task is initially not ready to run
+	/// \note A stack that cannot be allocated is a system panic, which names the caller.
 	CTask (unsigned nStackSize = TASK_STACK_SIZE, boolean bCreateSuspended = FALSE);
 
 	/// \param nStackSize Stack size for this task (0 used internally for the main task)
 	/// \param bCreateSuspended Set to TRUE, if the task is initially not ready to run
 	/// \param Creation TaskCreationChecked
 	/// \note Where the stack cannot be allocated, the task does not join the scheduler,
-	///	  IsValid () returns FALSE, and the caller deletes the task.
-	/// \note Without the C++ standard library (STDLIB_SUPPORT < 3), a heap that keeps a
-	///	  reserve, as HEAP_LOW does, halts the system when it first runs out of memory,
-	///	  before this constructor can report it.
+	///	  IsValid () returns FALSE, and the caller deletes the task. The stack does not
+	///	  take the heap's reserve, so this holds in every build of Circle.
 	CTask (unsigned nStackSize, boolean bCreateSuspended, TTaskCreation Creation);
 
 	virtual ~CTask (void);
@@ -139,7 +138,8 @@ private:
 	/// \param nStackSize Stack size for this task
 	/// \param bCreateSuspended Set to TRUE, if the task is initially not ready to run
 	/// \param bChecked TRUE to return without registration when the stack cannot be allocated
-	CTask (unsigned nStackSize, boolean bCreateSuspended, boolean bChecked);
+	/// \param pCaller Return address of the public constructor, logged with a panic
+	CTask (unsigned nStackSize, boolean bCreateSuspended, boolean bChecked, const void *pCaller);
 
 	void InitializeRegs (void);
 
@@ -151,8 +151,7 @@ private:
 	unsigned	    m_nWakeTicks;
 	TTaskRegisters	    m_Regs;
 	unsigned	    m_nStackSize;
-	u8		   *m_pStack;
-	boolean		    m_bCheckedStack;	// m_pStack comes from CMemorySystem::HeapAllocate ()
+	u8		   *m_pStack;		// from CMemorySystem::HeapAllocate ()
 	CString		    m_Name;
 	void		   *m_pUserData[TASK_USER_DATA_SLOTS];
 	CSynchronizationEvent m_Event;
