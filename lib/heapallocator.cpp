@@ -113,6 +113,13 @@ void *CHeapAllocator::DoAllocate (size_t nSize, boolean bMayFail)
 		if (   pNextBlock <= m_pNext			// may have wrapped
 		    || pNextBlock > m_pLimit-m_nReserve)
 		{
+#ifdef HEAP_DEBUG
+			if (pBucket->nSize > 0)
+			{
+				pBucket->nCount--;	// the block is not allocated
+			}
+#endif
+
 			// the reserve stays for the message of a caller, who cannot handle 0
 			if (   m_nReserve == 0
 			    || bMayFail)
