@@ -38,7 +38,8 @@ CScheduler::CScheduler (void)
 	m_pTaskSwitchHandler (0),
 	m_pTaskTerminationHandler (0),
 	m_iSuspendNewTasks (0),
-	m_nSecondaryCoreCalls (0)
+	m_nSecondaryCoreCalls (0),
+	m_nSecondaryCoreCallers (0)
 {
 	assert (s_pThis == 0);
 	s_pThis = this;
@@ -58,7 +59,7 @@ CScheduler::~CScheduler (void)
 
 void CScheduler::Yield (void)
 {
-	if (CountSecondaryCoreCall (__builtin_return_address (0)))
+	if (CountSecondaryCoreCall ("Yield", __builtin_return_address (0)))
 	{
 		return;		// the tasks run on core 0, nothing to switch here
 	}
@@ -92,7 +93,7 @@ void CScheduler::Yield (void)
 
 void CScheduler::Sleep (unsigned nSeconds)
 {
-	boolean bSecondaryCore = CountSecondaryCoreCall (__builtin_return_address (0));
+	boolean bSecondaryCore = CountSecondaryCoreCall ("Sleep", __builtin_return_address (0));
 
 	// be sure the clock does not run over taken as signed int
 	const unsigned nSleepMax = 1800;	// normally 2147 but to be sure
@@ -108,7 +109,7 @@ void CScheduler::Sleep (unsigned nSeconds)
 
 void CScheduler::MsSleep (unsigned nMilliSeconds)
 {
-	boolean bSecondaryCore = CountSecondaryCoreCall (__builtin_return_address (0));
+	boolean bSecondaryCore = CountSecondaryCoreCall ("MsSleep", __builtin_return_address (0));
 
 	if (nMilliSeconds > 0)
 	{
@@ -118,7 +119,7 @@ void CScheduler::MsSleep (unsigned nMilliSeconds)
 
 void CScheduler::usSleep (unsigned nMicroSeconds)
 {
-	usSleepOnCore (nMicroSeconds, CountSecondaryCoreCall (__builtin_return_address (0)));
+	usSleepOnCore (nMicroSeconds, CountSecondaryCoreCall ("usSleep", __builtin_return_address (0)));
 }
 
 void CScheduler::usSleepOnCore (unsigned nMicroSeconds, boolean bSecondaryCore)
@@ -153,8 +154,13 @@ unsigned CScheduler::GetSecondaryCoreCalls (void) const
 
 CTask *CScheduler::GetCurrentTask (void)
 {
+	return GetCurrentTask (__builtin_return_address (0));
+}
+
+CTask *CScheduler::GetCurrentTask (const void *pCaller)
+{
 	// m_pCurrent is a task of core 0, a secondary core has no current task
-	PanicOnSecondaryCore ("GetCurrentTask", __builtin_return_address (0));
+	PanicOnSecondaryCore ("GetCurrentTask", pCaller);
 
 	return m_pCurrent;
 }
@@ -347,8 +353,16 @@ void CScheduler::RemoveTask (CTask *pTask)
 boolean CScheduler::BlockTask (CTask **ppWaitListHead, unsigned nMicroSeconds,
 				const void *pCaller, const volatile boolean *pState)
 {
-	// m_pCurrent is a task of core 0, it must not be blocked from elsewhere.
-	// This does not depend on *pState, so that a wait fails on its first call.
+	// m_pCurrent is a task of core 0, it must not be blocked from elsewhere. A wait
+	// for an event, which is already set, does not block and returns as on core 0.
+	// It is counted, because the same wait is a system panic, when the event is clear.
+	if (   pState != 0
+	    && *pState
+	    && CountSecondaryCoreCall ("Wait for a set event", pCaller))
+	{
+		return nMicroSeconds == 0;
+	}
+
 	PanicOnSecondaryCore ("Wait", pCaller);
 
 	assert (ppWaitListHead != 0);
@@ -527,7 +541,7 @@ unsigned CScheduler::GetNextTask (void)
 	return MAX_TASKS;
 }
 
-boolean CScheduler::CountSecondaryCoreCall (const void *pCaller)
+boolean CScheduler::CountSecondaryCoreCall (const char *pOperation, const void *pCaller)
 {
 #ifdef ARM_ALLOW_MULTI_CORE
 	unsigned nCore = CMultiCoreSupport::ThisCore ();
@@ -548,18 +562,47 @@ boolean CScheduler::CountSecondaryCoreCall (const void *pCaller)
 		nCalls = nPrevious;	// another core was faster, try again
 	}
 
-	if (nCalls == 0)		// first call
+	// a line for each call would fill the log from a polling loop
+	if (IsNewSecondaryCoreCaller (pCaller))
 	{
 		CLogger::Get ()->Write (FromScheduler, LogWarning,
-					"Yield or sleep on core %u (return address 0x%lX),"
+					"%s on core %u (return address 0x%lX),"
 					" tasks run on core 0 only",
-					nCore, (uintptr) pCaller);
+					pOperation, nCore, (uintptr) pCaller);
 	}
 
 	return TRUE;
 #else
 	return FALSE;
 #endif
+}
+
+boolean CScheduler::IsNewSecondaryCoreCaller (const void *pCaller)
+{
+	boolean bNew = FALSE;
+
+	m_SecondaryCoreCallerLock.Acquire ();
+
+	unsigned i;
+	for (i = 0; i < m_nSecondaryCoreCallers; i++)
+	{
+		if (m_pSecondaryCoreCaller[i] == pCaller)
+		{
+			break;
+		}
+	}
+
+	if (   i == m_nSecondaryCoreCallers
+	    && m_nSecondaryCoreCallers < MAX_SECONDARY_CORE_CALLERS)
+	{
+		m_pSecondaryCoreCaller[m_nSecondaryCoreCallers++] = pCaller;
+
+		bNew = TRUE;
+	}
+
+	m_SecondaryCoreCallerLock.Release ();
+
+	return bNew;
 }
 
 void CScheduler::PanicOnSecondaryCore (const char *pOperation, const void *pCaller)

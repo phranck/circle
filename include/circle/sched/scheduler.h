@@ -37,6 +37,7 @@ enum TTaskFlags		///< for EnumerateTasks()
 typedef void TSchedulerTaskHandler (CTask *pTask);
 
 #define MAX_SECONDARY_CORE_CALLS	0x7FFFFFFF	///< CScheduler::GetSecondaryCoreCalls() stops here
+#define MAX_SECONDARY_CORE_CALLERS	16		///< return addresses of these calls that are logged
 
 /// \note This scheduler uses the round-robin policy, without priorities.
 
@@ -61,9 +62,11 @@ public:
 	void usSleep (unsigned nMicroSeconds);
 
 	/// \return Number of calls of Yield(), Sleep(), MsSleep() and usSleep()\n
-	///	    on a secondary core
+	///	    on a secondary core, and of waits there for a CSynchronizationEvent,\n
+	///	    which is already set
 	/// \note The tasks run on core 0 only, so these calls do not switch the task.\n
-	///	  The first one is logged with its core and its return address.
+	///	  The first call from each return address is logged with its core,\n
+	///	  for up to MAX_SECONDARY_CORE_CALLERS different return addresses.
 	/// \note The count stops at MAX_SECONDARY_CORE_CALLS and is always 0\n
 	///	  without ARM_ALLOW_MULTI_CORE.
 	unsigned GetSecondaryCoreCalls (void) const;
@@ -128,7 +131,8 @@ private:
 	friend class CTask;
 
 	// pCaller is the return address of the wait. A secondary core has no task
-	// that could be blocked, so a call there is a system panic.
+	// that could be blocked, so a call there is a system panic, unless *pState
+	// is set, where the wait would not block and is counted.
 	// pState is an optional pointer to a synchronization event variable, which is
 	// atomically checked with the blocking operation. When is specified and is set,
 	// the method returns silently.
@@ -137,6 +141,11 @@ private:
 	void WakeTasks (CTask **ppWaitListHead); // can be called from interrupt context
 	friend class CSynchronizationEvent;
 
+	// GetCurrentTask() for CMutex, pCaller is the return address the system panic
+	// on a secondary core names, which is the one of the caller of CMutex
+	CTask *GetCurrentTask (const void *pCaller);
+	friend class CMutex;
+
 	void RemoveTask (CTask *pTask);
 	unsigned GetNextTask (void); // returns index into m_pTask or MAX_TASKS if no task was found
 
@@ -144,11 +153,16 @@ private:
 	void usSleepOnCore (unsigned nMicroSeconds, boolean bSecondaryCore);
 
 	// The checks of the calling core, which is always core 0 without
-	// ARM_ALLOW_MULTI_CORE. pCaller is the return address of the checked call.
-	// returns TRUE on a secondary core, where it counts the call and logs the first one
-	boolean CountSecondaryCoreCall (const void *pCaller);
-	// is a system panic on a secondary core, pOperation names the call in the log
+	// ARM_ALLOW_MULTI_CORE. pCaller is the return address of the checked call,
+	// and pOperation names the call in the log.
+	// returns TRUE on a secondary core, where it counts the call and logs it,
+	// if it is the first one from pCaller
+	boolean CountSecondaryCoreCall (const char *pOperation, const void *pCaller);
+	// is a system panic on a secondary core
 	void PanicOnSecondaryCore (const char *pOperation, const void *pCaller);
+
+	// returns TRUE once for each pCaller, for up to MAX_SECONDARY_CORE_CALLERS of them
+	boolean IsNewSecondaryCoreCaller (const void *pCaller);
 
 private:
 	CTask *m_pTask[MAX_TASKS];
@@ -163,6 +177,11 @@ private:
 	int m_iSuspendNewTasks;
 
 	volatile int m_nSecondaryCoreCalls;	// see GetSecondaryCoreCalls()
+
+	// the return addresses IsNewSecondaryCoreCaller() has seen, guarded by its lock
+	const void *m_pSecondaryCoreCaller[MAX_SECONDARY_CORE_CALLERS];
+	unsigned m_nSecondaryCoreCallers;
+	CSpinLock m_SecondaryCoreCallerLock;
 
 	CSpinLock m_SpinLock;
 

@@ -89,6 +89,9 @@ void CTask::Run (void)		// dummy method which is never called
 
 void CTask::Terminate (void)
 {
+	// callable from this task only, and a secondary core runs no task
+	CScheduler::Get ()->PanicOnSecondaryCore ("Terminate", __builtin_return_address (0));
+
 	m_State = TaskStateTerminated;
 	m_Event.Set ();
 	CScheduler::Get ()->Yield ();
@@ -106,7 +109,8 @@ void CTask::WaitForTermination (void)
 		return;
 	}
 
-	m_Event.Wait ();
+	// a wait on a secondary core names the caller of this method
+	m_Event.Wait (__builtin_return_address (0));
 }
 
 void CTask::SetName (const char *pName)
