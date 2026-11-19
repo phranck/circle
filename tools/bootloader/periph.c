@@ -210,7 +210,8 @@ unsigned int timer_tick ( void )
     unsigned long nCNTFRQ;
     asm volatile ("mrs %0, CNTFRQ_EL0" : "=r" (nCNTFRQ));
 
-    return (int) (nCNTPCT * 1000000 / nCNTFRQ);
+    // whole seconds and the rest apart, as nCNTPCT * 1000000 leaves 64 bits after 2^64 / 1000000 counts
+    return (int) (nCNTPCT / nCNTFRQ * 1000000 + nCNTPCT % nCNTFRQ * 1000000 / nCNTFRQ);
 #endif
 }
 //-------------------------------------------------------------------------
