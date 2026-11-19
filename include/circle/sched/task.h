@@ -51,7 +51,9 @@ class CTask	/// Overload this class, define the Run() method, and call new on it
 public:
 	/// \param nStackSize Stack size for this task (0 used internally for the main task)
 	/// \param bCreateSuspended Set to TRUE, if the task is initially not ready to run
-	/// \note A stack that cannot be allocated is a system panic, which names the caller.
+	/// \note A stack that cannot be allocated is a system panic, which names the caller.\n
+	///	  With STDLIB_SUPPORT 3 and 4, the caller is logged as a warning, and the
+	///	  constructor throws std::bad_alloc.
 	CTask (unsigned nStackSize = TASK_STACK_SIZE, boolean bCreateSuspended = FALSE);
 
 	/// \param nStackSize Stack size for this task (0 used internally for the main task)
@@ -60,6 +62,8 @@ public:
 	/// \note Where the stack cannot be allocated, the task does not join the scheduler,
 	///	  IsValid () returns FALSE, and the caller deletes the task. The stack does not
 	///	  take the heap's reserve, so this holds in every build of Circle.
+	/// \note Only the stack is checked. The task object, its name and its entry in the
+	///	  scheduler are allocated and checked as with the other constructor.
 	CTask (unsigned nStackSize, boolean bCreateSuspended, TTaskCreation Creation);
 
 	virtual ~CTask (void);

@@ -24,6 +24,16 @@
 #include <circle/util.h>
 #include <assert.h>
 
+#if STDLIB_SUPPORT >= 3
+	#include <new>
+
+	// the heap, which operator new of the C++ library takes its blocks from (lib/alloc.cpp)
+	#define TASK_STACK_HEAP		HEAP_DEFAULT_MALLOC
+#else
+	// the heap, which Circle's operator new takes its blocks from (lib/new.cpp)
+	#define TASK_STACK_HEAP		HEAP_DEFAULT_NEW
+#endif
+
 LOGMODULE ("task");
 
 // The public constructors pass their own return address on, so that a panic names
@@ -62,15 +72,23 @@ CTask::CTask (unsigned nStackSize, boolean bCreateSuspended, boolean bChecked,
 		assert ((m_nStackSize & 15) == 0);
 #endif
 		// HeapAllocate () may return 0, where a check after new could be removed by
-		// the compiler. A checked stack does not take the heap's reserve, so that
-		// the caller learns that it is missing, instead of the system halting.
-		m_pStack = (u8 *) CMemorySystem::HeapAllocate (m_nStackSize, HEAP_DEFAULT_NEW, bChecked);
+		// the compiler. The stack does not take the heap's reserve, so that a checked
+		// task reports it as missing, and the other one names its caller.
+		m_pStack = (u8 *) CMemorySystem::HeapAllocate (m_nStackSize, TASK_STACK_HEAP, TRUE);
 		if (m_pStack == 0)
 		{
 			if (!bChecked)
 			{
+#if STDLIB_SUPPORT >= 3
+				// a caller may catch it, as from every new expression of this build
+				LOGWARN ("No stack for new task (caller 0x%lX)",
+					 (unsigned long) (uintptr) pCaller);
+
+				throw std::bad_alloc ();
+#else
 				LOGPANIC ("No stack for new task (caller 0x%lX)",
 					  (unsigned long) (uintptr) pCaller);
+#endif
 			}
 
 			m_State = TaskStateUnknown;

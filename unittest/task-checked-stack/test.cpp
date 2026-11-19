@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <new>
 
 using u8 = unsigned char;
 using u16 = unsigned short;
@@ -15,12 +16,14 @@ using boolean = bool;
 #define FALSE		false
 #define PACKED		__attribute__ ((packed))
 #define AARCH		64
-#define STDLIB_SUPPORT	1		// the heap halts the system, when it takes its reserve
+// STDLIB_SUPPORT comes from run.py, which builds the test with 1 and with 3
 #define DATA_CACHE_LINE_LENGTH_MAX	64
 #define ASSERT_STATIC(expr)		static_assert (expr, #expr)
 #define HEAP_BLOCK_BUCKET_SIZES		0x40,0x400,0x1000,0x4000,0x10000,0x40000,0x80000
 #define HEAP_LOW			0
+#define HEAP_ANY			2
 #define HEAP_DEFAULT_NEW		HEAP_LOW
+#define HEAP_DEFAULT_MALLOC		HEAP_ANY	// differs from HEAP_DEFAULT_NEW, so the test tells them apart
 #define TASK_STACK_SIZE			0x8000
 #define MEM_KERNEL_STACK		0x80000
 #define KERNEL_STACK_SIZE		0x20000
@@ -59,6 +62,7 @@ struct CLogger
 
 #define LOGMODULE(name)	static const char From[] = name
 #define LOGPANIC(...)	CLogger::Get ()->Write (From, LogPanic, __VA_ARGS__)
+#define LOGWARN(...)	CLogger::Get ()->Write (From, LogWarning, __VA_ARGS__)
 
 struct CSpinLock
 {
@@ -69,14 +73,17 @@ struct CSpinLock
 #include "heapallocator.h.inc"
 #include "heapallocator.cpp.inc"
 
-// the heap the tasks take their stacks from
+// the heap the tasks take their stacks from, whichever heap they ask for
 static CHeapAllocator *s_pHeap = 0;
+
+// the heap the last task asked for
+static int s_nLastType = -1;
 
 struct CMemorySystem
 {
 	static void *HeapAllocate (size_t nSize, int nType, boolean bMayFail = FALSE)
 	{
-		assert (nType == HEAP_DEFAULT_NEW);
+		s_nLastType = nType;
 		return s_pHeap->Allocate (nSize, bMayFail);
 	}
 
@@ -168,6 +175,43 @@ static bool Panics (TCall Call)
 	return false;
 }
 
+// whether a call fails as a task without a stack fails: with a panic below
+// STDLIB_SUPPORT 3, with std::bad_alloc, which a caller may catch, from 3 on
+template <typename TCall>
+static bool FailsWithoutStack (TCall Call)
+{
+	try
+	{
+		Call ();
+	}
+	catch (const TPanic &)
+	{
+		return STDLIB_SUPPORT < 3;
+	}
+	catch (const std::bad_alloc &)
+	{
+		return STDLIB_SUPPORT >= 3;
+	}
+
+	return false;
+}
+
+// whether a request, which cannot handle 0, takes the reserve and reports "Out of memory":
+// below STDLIB_SUPPORT 3 the heap halts the system, from 3 on it logs a warning
+static bool TakesReserve (void)
+{
+	CLogger *pLogger = CLogger::Get ();
+	unsigned nWritten = pLogger->m_nWritten;
+	bool bPanic = Panics ([] { s_pHeap->Allocate (TASK_STACK_SIZE); });
+
+	return    bPanic == (STDLIB_SUPPORT < 3)
+	       && pLogger->m_nWritten == nWritten + 1
+	       && strstr (pLogger->m_Last, "Out of memory") != 0;
+}
+
+// the heap a task's stack comes from: the one operator new takes its blocks from
+static const int StackHeap = STDLIB_SUPPORT >= 3 ? HEAP_DEFAULT_MALLOC : HEAP_DEFAULT_NEW;
+
 int main ()
 {
 	CLogger *pLogger = CLogger::Get ();
@@ -179,21 +223,22 @@ int main ()
 	unsigned nWritten = pLogger->m_nWritten;
 	assert (!Panics ([] { assert (s_pHeap->Allocate (TASK_STACK_SIZE, TRUE) == 0); }));
 	assert (pLogger->m_nWritten == nWritten);
-	assert (Panics ([] { s_pHeap->Allocate (TASK_STACK_SIZE); }));
-	assert (strstr (pLogger->m_Last, "Out of memory") != 0);
+	assert (TakesReserve ());
 
 	// a checked task without room for its stack is invalid, stays out of the scheduler,
-	// and logs nothing, also where the heap keeps a reserve
+	// logs nothing, and leaves the reserve
 	SetupHeap (Reserve);
 	Fill ();
 	nWritten = pLogger->m_nWritten;
 	unsigned nAdded = pScheduler->m_nAdded;
 	CCheckedTask *pChecked = 0;
 	assert (!Panics ([&] { pChecked = new CCheckedTask; }));
+	assert (s_nLastType == StackHeap);
 	assert (!pChecked->IsValid ());
 	assert (pScheduler->m_nAdded == nAdded);
 	assert (pLogger->m_nWritten == nWritten);
 	delete pChecked;
+	assert (TakesReserve ());
 
 	// a checked task with room is valid, joins the scheduler, and gives its stack back
 	SetupHeap (Reserve);
@@ -205,20 +250,24 @@ int main ()
 	delete pChecked;
 	assert (s_pHeap->Allocate (TASK_STACK_SIZE) == pStack);
 
-	// a task of the other constructor without room for its stack is a panic,
-	// which names the caller, also where the heap keeps no reserve
-	SetupHeap (0);
-	Fill ();
-	assert (Panics ([] { delete new CPlainTask; }));
-	assert (strstr (pLogger->m_Last, "No stack for new task (caller 0x") != 0);
-
-	// with a reserve, the heap halts the system first, as before
-	SetupHeap (Reserve);
-	Fill ();
-	assert (Panics ([] { delete new CPlainTask; }));
-	assert (strstr (pLogger->m_Last, "Out of memory") != 0);
+	// a task of the other constructor without room for its stack names its caller, stays
+	// out of the scheduler, and leaves the reserve, where the heap keeps one
+	static const size_t Reserves[] = {0, Reserve};
+	for (size_t nReserve : Reserves)
+	{
+		SetupHeap (nReserve);
+		Fill ();
+		nAdded = pScheduler->m_nAdded;
+		s_nLastType = -1;
+		assert (FailsWithoutStack ([] { delete new CPlainTask; }));
+		assert (s_nLastType == StackHeap);
+		assert (strstr (pLogger->m_Last, "No stack for new task (caller 0x") != 0);
+		assert (strstr (pLogger->m_Last, "(caller 0x0)") == 0);
+		assert (pScheduler->m_nAdded == nAdded);
+		assert (nReserve == 0 || TakesReserve ());
+	}
 
 	delete s_pHeap;
 
-	printf ("Task checked stack passed\n");
+	printf ("Task checked stack passed with STDLIB_SUPPORT %d\n", STDLIB_SUPPORT);
 }

@@ -31,9 +31,11 @@ with tempfile.TemporaryDirectory() as tmp:
     (folder / 'heapallocator.cpp.inc').write_text(without_includes('lib/heapallocator.cpp'))
     (folder / 'task.h.inc').write_text(without_includes('include/circle/sched/task.h'))
     (folder / 'task.cpp.inc').write_text(without_registers(without_includes('lib/sched/task.cpp')))
-    exe = folder / 'test'
-    # CTask's list fields are used by the real scheduler, which the test stands in for
-    subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++17', '-Wall', '-Wextra', '-Werror',
-                    '-Wno-unused-parameter', '-Wno-unused-private-field', '-I', tmp, str(here / 'test.cpp'),
-                    '-o', str(exe)], check=True)
-    subprocess.run([str(exe)], check=True, timeout=60)
+    # below 3 the heap's reserve and a missing stack halt the system, from 3 on they are reported with exceptions
+    for stdlib in (1, 3):
+        exe = folder / f'test-stdlib{stdlib}'
+        # CTask's list fields are used by the real scheduler, which the test stands in for
+        subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++17', '-Wall', '-Wextra', '-Werror',
+                        '-Wno-unused-parameter', '-Wno-unused-private-field', f'-DSTDLIB_SUPPORT={stdlib}',
+                        '-I', tmp, str(here / 'test.cpp'), '-o', str(exe)], check=True)
+        subprocess.run([str(exe)], check=True, timeout=60)
