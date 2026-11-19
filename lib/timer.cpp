@@ -191,6 +191,14 @@ boolean CTimer::SetTime (unsigned nTime, boolean bLocal)
 			return FALSE;
 		}
 
+		// east of UTC the local time of the last seconds before 2106-02-07
+		// would pass the largest unsigned time and wrap to 1970
+		if (    nSecondsDiff > 0
+		    && nTime > 0xFFFFFFFFU - (unsigned) nSecondsDiff)
+		{
+			return FALSE;
+		}
+
 		nTime += nSecondsDiff;
 	}
 
