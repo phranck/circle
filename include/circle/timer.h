@@ -85,6 +85,18 @@ public:
 		       + nCount % nFrequency * CLOCKHZ / nFrequency;
 	}
 
+	/// \brief Tells whether the timer supports the frequency of the CPU's counter
+	/// \param nFrequency	Counts per second of the counter, as CNTFRQ_EL0 holds it
+	/// \return TRUE for a multiple of HZ from HZ up to 0xFFFFFFFF * HZ: the timer's interrupt
+	///	    then comes after a whole number of counts, which fits its 32-bit count per tick,
+	///	    and CounterToClockTicks() is exact, as it takes frequencies up to 2^64 / CLOCKHZ
+	static boolean IsCounterFrequencySupported (u64 nFrequency)
+	{
+		return    nFrequency != 0
+		       && nFrequency % HZ == 0
+		       && nFrequency / HZ <= 0xFFFFFFFFU;
+	}
+
 	/// \return 1/HZ seconds since system boot, may wrap
 	unsigned GetTicks (void) const;
 	/// \return Seconds since system boot (continous)

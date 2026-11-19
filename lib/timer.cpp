@@ -121,7 +121,11 @@ boolean CTimer::Initialize (void)
 #else
 	u64 nCNTFRQ;
 	asm volatile ("mrs %0, CNTFRQ_EL0" : "=r" (nCNTFRQ));
-	assert (nCNTFRQ % HZ == 0);
+	if (!IsCounterFrequencySupported (nCNTFRQ))
+	{
+		CLogger::Get ()->Write (FromTimer, LogPanic,
+					"Counter frequency %lu Hz is not supported", nCNTFRQ);
+	}
 	m_nClockTicksPerHZTick = nCNTFRQ / HZ;
 
 	u64 nCNTPCT;
