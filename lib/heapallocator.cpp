@@ -60,16 +60,16 @@ size_t CHeapAllocator::GetFreeSpace (void) const
 	return m_pLimit - m_pNext;
 }
 
-void *CHeapAllocator::Allocate (size_t nSize)
+void *CHeapAllocator::Allocate (size_t nSize, boolean bMayFail)
 {
 #ifdef KASAN_SUPPORTED
-	return KasanAllocateHook (*this, nSize);
+	return KasanAllocateHook (*this, nSize, bMayFail);
 #else
-	return DoAllocate (nSize);
+	return DoAllocate (nSize, bMayFail);
 #endif
 }
 
-void *CHeapAllocator::DoAllocate (size_t nSize)
+void *CHeapAllocator::DoAllocate (size_t nSize, boolean bMayFail)
 {
 	if (m_pNext == 0)
 	{
@@ -113,7 +113,9 @@ void *CHeapAllocator::DoAllocate (size_t nSize)
 		if (   pNextBlock <= m_pNext			// may have wrapped
 		    || pNextBlock > m_pLimit-m_nReserve)
 		{
-			if (m_nReserve == 0)
+			// the reserve stays for the message of a caller, who cannot handle 0
+			if (   m_nReserve == 0
+			    || bMayFail)
 			{
 				m_SpinLock.Release ();
 

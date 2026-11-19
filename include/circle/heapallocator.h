@@ -84,10 +84,13 @@ public:
 	size_t GetFreeSpace (void) const;
 
 	/// \param nSize Block size to be allocated
+	/// \param bMayFail Set to TRUE, if the caller handles a result of 0. Then a full heap
+	///		    returns 0 without taking the reserve and without a message.
 	/// \return Pointer to new allocated block (0 if heap is full or not set-up)
 	/// \note Resulting block is always 16 bytes aligned
-	/// \note If nReserve in Setup() is non-zero, the system panics if heap is full.
-	void *Allocate (size_t nSize);
+	/// \note If nReserve in Setup() is non-zero and bMayFail is FALSE,\n
+	///	  the system panics if heap is full.
+	void *Allocate (size_t nSize, boolean bMayFail = FALSE);
 
 	/// \param pBlock Memory block to be reallocated
 	/// \param nSize  New block size
@@ -104,11 +107,12 @@ public:
 #endif
 
 private:
-	void *DoAllocate (size_t nSize);
+	void *DoAllocate (size_t nSize, boolean bMayFail);
 	void *DoReAllocate (void *pBlock, size_t nSize);
 	void DoFree (void *pBlock);
 
-	friend void *KasanAllocateHook (CHeapAllocator& rHeapAllocator, size_t nSize);
+	friend void *KasanAllocateHook (CHeapAllocator& rHeapAllocator, size_t nSize,
+					boolean bMayFail);
 	friend void *KasanReAllocateHook (CHeapAllocator& rHeapAllocator, void *pBlock, ssize_t nSize);
 	friend void KasanFreeHook (CHeapAllocator& rHeapAllocator, void *pBlock);
 

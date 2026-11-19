@@ -325,11 +325,11 @@ void *kasan_shadow_allocated(char *ptr, size_t nSize, size_t aligned_size)
     return ptr + KASAN_HEAP_HEAD_REDZONE_SIZE;
 }
 
-void *KasanAllocateHook (CHeapAllocator &rHeapAllocator, size_t nSize)
+void *KasanAllocateHook (CHeapAllocator &rHeapAllocator, size_t nSize, boolean bMayFail)
 {
     kasan_allocate_params const allocate_params = kasan_get_allocate_params(nSize);
 
-    char *const ptr = static_cast<char *>(rHeapAllocator.DoAllocate(allocate_params.total_size));
+    char *const ptr = static_cast<char *>(rHeapAllocator.DoAllocate(allocate_params.total_size, bMayFail));
     if (ptr == nullptr)
         return nullptr;
 
@@ -355,7 +355,7 @@ void *KasanReAllocateHook (CHeapAllocator &rHeapAllocator, void *pBlock, ssize_t
 {
     if (pBlock == nullptr)
     {
-        return KasanAllocateHook(rHeapAllocator, nSize);
+        return KasanAllocateHook(rHeapAllocator, nSize, FALSE);
     }
 
     char *const old_ptr = static_cast<char *>(pBlock);

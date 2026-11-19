@@ -20,7 +20,7 @@
 void KasanInitialize (void);
 
 class CHeapAllocator;
-void *KasanAllocateHook (CHeapAllocator& rHeapAllocator, size_t nSize);
+void *KasanAllocateHook (CHeapAllocator& rHeapAllocator, size_t nSize, boolean bMayFail);
 void *KasanReAllocateHook (CHeapAllocator& rHeapAllocator, void *pBlock, ssize_t nSize);
 void KasanFreeHook (CHeapAllocator& rHeapAllocator, void *pBlock);
 #endif

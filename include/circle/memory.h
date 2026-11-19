@@ -71,7 +71,8 @@ public:
 	static CMemorySystem *Get (void);
 
 public:
-	static void *HeapAllocate (size_t nSize, int nType)
+	// bMayFail: the caller handles a result of 0 (see CHeapAllocator::Allocate())
+	static void *HeapAllocate (size_t nSize, int nType, boolean bMayFail = FALSE)
 #define HEAP_LOW	0		// memory below 1 GB
 #define HEAP_HIGH	1		// memory above 1 GB
 #define HEAP_ANY	2		// high memory (if available) or low memory (otherwise)
@@ -82,18 +83,18 @@ public:
 
 		switch (nType)
 		{
-		case HEAP_LOW:	return s_pThis->m_HeapLow.Allocate (nSize);
-		case HEAP_HIGH: return s_pThis->m_HeapHigh.Allocate (nSize);
-		case HEAP_ANY:	return   (pBlock = s_pThis->m_HeapHigh.Allocate (nSize)) != 0
+		case HEAP_LOW:	return s_pThis->m_HeapLow.Allocate (nSize, bMayFail);
+		case HEAP_HIGH: return s_pThis->m_HeapHigh.Allocate (nSize, bMayFail);
+		case HEAP_ANY:	return   (pBlock = s_pThis->m_HeapHigh.Allocate (nSize, bMayFail)) != 0
 				       ? pBlock
-				       : s_pThis->m_HeapLow.Allocate (nSize);
+				       : s_pThis->m_HeapLow.Allocate (nSize, bMayFail);
 		default:	return 0;
 		}
 #else
 		switch (nType)
 		{
 		case HEAP_LOW:
-		case HEAP_ANY:	return s_pThis->m_HeapLow.Allocate (nSize);
+		case HEAP_ANY:	return s_pThis->m_HeapLow.Allocate (nSize, bMayFail);
 		default:	return 0;
 		}
 #endif
