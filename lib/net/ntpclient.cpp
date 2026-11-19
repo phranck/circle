@@ -28,9 +28,21 @@
 
 #define NTP_PACKET_SIZE		48
 
+#define NTP_MODE_SERVER		4	// the mode of a server's reply to a client
+#define NTP_LEAP_NOSYNC		3	// leap indicator: clock never synchronized
+#define NTP_STRATUM_KISS	0	// stratum of a kiss-o'-death reply
+#define NTP_MAXSTRAT		16	// stratum of an unsynchronized server
+#define NTP_REFID_OFFSET	12	// reference identifier, the kiss code at stratum 0
+
 #define SEVENTY_YEARS		2208988800U
 
 static const char FromNTPClient[] = "ntp";
+
+// a kiss code is ASCII, any other byte is logged as '?'
+static char KissCodeChar (u8 uchByte)
+{
+	return ' ' <= uchByte && uchByte <= '~' ? (char) uchByte : '?';
+}
 
 CNTPClient::CNTPClient (CNetSubSystem *pNetSubSystem)
 :	m_pNetSubSystem (pNetSubSystem)
@@ -95,6 +107,55 @@ unsigned CNTPClient::GetTime (CIPAddress &rServerIP)
 		return 0;
 	}
 
+	// Every 32-bit value of the seconds maps to a Unix time below, so the
+	// checks that follow keep a reply that holds no synchronized server's
+	// time from setting the clock. RFC 4330 section 5, as corrected by erratum 2263,
+	// discards a reply whose version or stratum is 0 or whose mode is not the
+	// server's. A reply of stratum 0 carries a kiss code (RFC 5905 section
+	// 7.4), such as "INIT" from a server that has not synchronized yet. RFC 5905
+	// does not use the time of a server that has never been synchronized
+	// (leap indicator 3) or whose stratum is MAXSTRAT or more (appendix
+	// A.5.5.3, accept()).
+	const u8 *pServer = rServerIP.Get ();
+	unsigned nLeap = RecvPacket[0] >> 6;
+	unsigned nVersion = (RecvPacket[0] >> 3) & 7;
+	unsigned nMode = RecvPacket[0] & 7;
+	unsigned nStratum = RecvPacket[1];
+
+	if (   nVersion == 0
+	    || nMode != NTP_MODE_SERVER)
+	{
+		CLogger::Get ()->Write (FromNTPClient, LogError,
+					"No server reply from %u.%u.%u.%u (version %u, mode %u)",
+					pServer[0], pServer[1], pServer[2], pServer[3],
+					nVersion, nMode);
+
+		return 0;
+	}
+
+	if (nStratum == NTP_STRATUM_KISS)
+	{
+		const u8 *pKissCode = RecvPacket + NTP_REFID_OFFSET;
+		CLogger::Get ()->Write (FromNTPClient, LogError,
+					"Kiss code %c%c%c%c from %u.%u.%u.%u",
+					KissCodeChar (pKissCode[0]), KissCodeChar (pKissCode[1]),
+					KissCodeChar (pKissCode[2]), KissCodeChar (pKissCode[3]),
+					pServer[0], pServer[1], pServer[2], pServer[3]);
+
+		return 0;
+	}
+
+	if (   nLeap == NTP_LEAP_NOSYNC
+	    || nStratum >= NTP_MAXSTRAT)
+	{
+		CLogger::Get ()->Write (FromNTPClient, LogError,
+					"%u.%u.%u.%u is not synchronized (leap indicator %u, stratum %u)",
+					pServer[0], pServer[1], pServer[2], pServer[3],
+					nLeap, nStratum);
+
+		return 0;
+	}
+
 	// RFC 4330 section 5: a reply with a Transmit Timestamp of 0 is to be discarded;
 	// seconds of 0 with a fraction are a valid time at the start of the 2036 era
 	static const u8 NoTimestamp[8] = {0};
@@ -111,8 +172,9 @@ unsigned CNTPClient::GetTime (CIPAddress &rServerIP)
 			     | (unsigned) RecvPacket[42] << 8
 			     | (unsigned) RecvPacket[43];
 
-	// The NTP seconds wrap at 2036. Unsigned subtraction maps both the
-	// first era after 1970 and the next one to Unix time through 2106.
+	// The NTP seconds wrap at 2036. Unsigned subtraction maps era 0 from 1970
+	// on and era 1 to Unix time through 2106; era 0 from 1968 to 1970, which
+	// has no Unix time, falls on 2104 to 2106.
 	unsigned nTime = nSecondsSince1900 - SEVENTY_YEARS;
 	
 	return nTime;

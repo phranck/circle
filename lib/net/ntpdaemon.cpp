@@ -102,8 +102,8 @@ unsigned CNTPDaemon::UpdateTime (void)
 		CLogger::Get ()->Write (FromNTPDaemon, LogWarning, "Cannot get time from %s",
 					(const char *) m_NTPServer);
 
-		// If the server didn't respond, and it was provided by DHCP, next time
-		// fall back to using the one provided by code.
+		// If the server didn't respond or its reply was refused, and it was
+		// provided by DHCP, next time fall back to using the one provided by code.
 		if (m_bUseIP)
 		{
 			m_bUseIP = FALSE;
