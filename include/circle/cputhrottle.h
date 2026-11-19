@@ -62,7 +62,7 @@ public:
 	/// Otherwise: the selected value
 	/// \param nDefaultFanPin GPIO pin number of a fan (2 to 53), used if the cmdline.txt\n
 	/// parameter "gpiofanpin" is not set, or 0 for no fan (e.g. 45 for the fan connector\n
-	/// of the Raspberry Pi 5)
+	/// of the Raspberry Pi 5); another pin is ignored and logged
 	CCPUThrottle (TCPUSpeed InitialSpeed = CPUSpeedUnknown, unsigned nDefaultFanPin = 0);
 	~CCPUThrottle (void);
 

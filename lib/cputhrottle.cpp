@@ -50,7 +50,15 @@ CCPUThrottle::CCPUThrottle (TCPUSpeed InitialSpeed, unsigned nDefaultFanPin)
 	s_pThis = this;
 	assert (s_pThis != 0);
 
-	assert (nDefaultFanPin == 0 || (2 <= nDefaultFanPin && nDefaultFanPin < GPIO_PINS));
+	// the range the option "gpiofanpin" takes (see CKernelOptions)
+	if (   nDefaultFanPin != 0
+	    && !(2 <= nDefaultFanPin && nDefaultFanPin < GPIO_PINS))
+	{
+		CLogger::Get ()->Write (FromCPUThrottle, LogError, "Fan pin %u ignored", nDefaultFanPin);
+
+		nDefaultFanPin = 0;
+	}
+
 	unsigned nFanPin = CKernelOptions::Get ()->GetGPIOFanPin ();
 	if (nFanPin == 0)
 	{
