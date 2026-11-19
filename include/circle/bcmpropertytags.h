@@ -314,7 +314,9 @@ PACKED;
 class CBcmPropertyTags
 {
 public:
-	CBcmPropertyTags (boolean bEarlyUse = FALSE);		// do not use spinlock early
+	// bEarlyUse changes nothing, because the spin locks do nothing before the
+	// other cores start (see GetTags())
+	CBcmPropertyTags (boolean bEarlyUse = FALSE);
 	~CBcmPropertyTags (void);
 
 	boolean GetTag (u32	  nTagId,			// tag identifier
@@ -327,7 +329,6 @@ public:
 
 private:
 	CBcmMailBox m_MailBox;
-	boolean m_bEarlyUse;
 
 	static CSpinLock s_SpinLock;	// guards the property buffer, which all cores share
 };

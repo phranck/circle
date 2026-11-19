@@ -40,8 +40,7 @@ PACKED;
 CSpinLock CBcmPropertyTags::s_SpinLock (TASK_LEVEL);
 
 CBcmPropertyTags::CBcmPropertyTags (boolean bEarlyUse)
-:	m_MailBox (BCM_MAILBOX_PROP_OUT, bEarlyUse),
-	m_bEarlyUse (bEarlyUse)
+:	m_MailBox (BCM_MAILBOX_PROP_OUT)
 {
 }
 
@@ -83,11 +82,13 @@ boolean CBcmPropertyTags::GetTags (void *pTags, unsigned nTagsSize)
 	TPropertyBuffer *pBuffer =
 		(TPropertyBuffer *) CMemorySystem::GetCoherentPage (COHERENT_SLOT_PROP_MAILBOX);
 
-	// all cores share the buffer, so it is held from the request until the response is copied
-	if (!m_bEarlyUse)
-	{
-		s_SpinLock.Acquire ();
-	}
+	// All cores share the buffer, so it is held from the request until the
+	// response is copied. A spin lock for TASK_LEVEL does nothing before
+	// CSpinLock::Enable(), which CMultiCoreSupport::Initialize() calls before it
+	// starts the other cores, so the early calls of CMemorySystem take it too.
+	// They come before the static constructors, when s_SpinLock is still zeroed
+	// memory, which reads as a free lock for TASK_LEVEL.
+	s_SpinLock.Acquire ();
 
 	pBuffer->nBufferSize = nBufferSize;
 	pBuffer->nCode = CODE_REQUEST;
@@ -113,10 +114,7 @@ boolean CBcmPropertyTags::GetTags (void *pTags, unsigned nTagsSize)
 		}
 	}
 
-	if (!m_bEarlyUse)
-	{
-		s_SpinLock.Release ();
-	}
+	s_SpinLock.Release ();
 
 	return bResult;
 }
