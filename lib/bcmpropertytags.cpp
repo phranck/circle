@@ -189,16 +189,23 @@ boolean CBcmPropertyTags::GetTags (void *pTags, unsigned nTagsSize, const void *
 	CompilerBarrier ();
 
 	// No call is refused on this core from here on. A call refused at
-	// FIQ_LEVEL interrupted this request, which therefore runs below
-	// FIQ_LEVEL and can log it.
-	const void *pRefused = s_pRefusedFromFIQ[nCore];
-	if (pRefused != 0)
+	// FIQ_LEVEL is logged below FIQ_LEVEL, by the request it interrupted, which
+	// runs there, or by a call that comes between that request's end and this
+	// point. The note is taken with IRQs and FIQs disabled, so only one of them
+	// logs it.
+	if (CurrentExecutionLevel () < FIQ_LEVEL)
 	{
+		EnterCritical (FIQ_LEVEL);
+		const void *pRefused = s_pRefusedFromFIQ[nCore];
 		s_pRefusedFromFIQ[nCore] = 0;
+		LeaveCritical ();
 
-		CLogger::Get ()->Write (FromPropertyTags, LogError,
-					"Call from FIQ_LEVEL interrupting a request on core %u refused"
-					" (return address 0x%lX)", nCore, (unsigned long) (uintptr) pRefused);
+		if (pRefused != 0)
+		{
+			CLogger::Get ()->Write (FromPropertyTags, LogError,
+						"Call from FIQ_LEVEL interrupting a request on core %u refused"
+						" (return address 0x%lX)", nCore, (unsigned long) (uintptr) pRefused);
+		}
 	}
 
 	return bResult;

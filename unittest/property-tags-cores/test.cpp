@@ -18,7 +18,6 @@ using boolean = bool;
 #define TRUE		true
 #define FALSE		false
 #define PACKED		__attribute__ ((packed))
-#define ARM_ALLOW_MULTI_CORE
 #define CORES		4
 #define TASK_LEVEL	0
 #define IRQ_LEVEL	1
@@ -36,8 +35,22 @@ static const u32 ArmClock = 2400000000;
 static thread_local unsigned s_nThisCore = 0;
 static thread_local unsigned s_nLevel = TASK_LEVEL;
 
+// called at each compiler barrier and after the lock is taken, to run an
+// interrupt handler at that point
+static thread_local void (*s_pBarrierHook) () = 0;
+static thread_local void (*s_pLockHook) () = 0;
+
 inline unsigned CurrentExecutionLevel () { return s_nLevel; }
-inline void CompilerBarrier () { std::atomic_signal_fence (std::memory_order_seq_cst); }
+inline void EnterCritical (unsigned = IRQ_LEVEL) {}
+inline void LeaveCritical () {}
+inline void CompilerBarrier ()
+{
+	std::atomic_signal_fence (std::memory_order_seq_cst);
+	if (s_pBarrierHook != 0)
+	{
+		s_pBarrierHook ();
+	}
+}
 inline void DataSyncBarrier () { std::atomic_thread_fence (std::memory_order_seq_cst); }
 inline void DataMemBarrier () { std::atomic_thread_fence (std::memory_order_seq_cst); }
 inline void DebugStackTrace (const uintptr *, const char *) {}
@@ -53,6 +66,8 @@ struct CLogger
 
 	void Write (const char *, TLogSeverity, const char *pMessage, ...)
 	{
+		assert (s_nLevel < FIQ_LEVEL);		// Circle's logger cannot be used there
+
 		std::lock_guard<std::mutex> Guard (m_Mutex);
 		va_list Args;
 		va_start (Args, pMessage);
@@ -104,6 +119,11 @@ struct CSpinLock
 			s_Firmware.Arrived.notify_all ();
 			m_Mutex.lock ();
 		}
+
+		if (s_pLockHook != 0)
+		{
+			s_pLockHook ();
+		}
 	}
 
 	void Release () { m_Mutex.unlock (); }
@@ -135,23 +155,24 @@ static u32 AskTemperature (unsigned nCore, unsigned nLevel, boolean bEarlyUse)
 
 static u32 AskArmClock (unsigned nCore, unsigned nLevel, boolean bEarlyUse)
 {
+	unsigned nLevelBefore = s_nLevel;
 	s_nThisCore = nCore;
 	s_nLevel = nLevel;
 	CBcmPropertyTags Tags (bEarlyUse);
 	TPropertyTagClockRate Tag;
 	Tag.nClockId = CLOCK_ID_ARM;
 	boolean bOK = Tags.GetTag (PROPTAG_GET_CLOCK_RATE, &Tag, sizeof Tag, 4);
-	s_nLevel = TASK_LEVEL;
+	s_nLevel = nLevelBefore;
 	return bOK ? Tag.nRate : 0;
 }
 
 static u32 s_nInterruptAnswer;			// what the interrupt handler's call returned
 static unsigned s_nInterruptMessages;		// what it logged
 
-static void Interrupt ()
+static void Interrupt (unsigned nLevel)
 {
 	unsigned nWritten = CLogger::Get ()->m_nWritten;
-	s_nInterruptAnswer = AskArmClock (0, s_Firmware.nInterruptLevel, FALSE);
+	s_nInterruptAnswer = AskArmClock (0, nLevel, FALSE);
 	s_nInterruptMessages = CLogger::Get ()->m_nWritten - nWritten;
 }
 
@@ -164,7 +185,7 @@ u32 CBcmMailBox::WriteRead (unsigned nData)
 	if (nCaller == 1 && s_Firmware.nInterruptLevel != TASK_LEVEL)
 	{
 		Lock.unlock ();
-		Interrupt ();
+		Interrupt (s_Firmware.nInterruptLevel);
 		Lock.lock ();
 	}
 
@@ -204,8 +225,39 @@ static u32 Within (std::future<u32> &Call)
 	return Call.get ();
 }
 
+// the third compiler barrier of a request comes after it ended on its core;
+// a second FIQ arrives there, once, and asks for itself
+static thread_local unsigned s_nBarriers;
+static void SecondFIQAfterTheRequest ()
+{
+	if (++s_nBarriers == 3)
+	{
+		s_pBarrierHook = 0;
+		Interrupt (FIQ_LEVEL);
+	}
+}
+
+// an IRQ arrives right after the request took the lock, once
+static void IRQAfterTheLock ()
+{
+	s_pLockHook = 0;
+	Interrupt (IRQ_LEVEL);
+}
+
+static u32 AskWithHooks (void (*pBarrierHook) (), void (*pLockHook) ())
+{
+	s_nBarriers = 0;
+	s_pBarrierHook = pBarrierHook;
+	s_pLockHook = pLockHook;
+	u32 nResult = AskTemperature (0, TASK_LEVEL, FALSE);
+	s_pBarrierHook = 0;
+	s_pLockHook = 0;
+	return nResult;
+}
+
 int main ()
 {
+#ifdef ARM_ALLOW_MULTI_CORE
 	// two cores ask at the same time, with objects for normal and for early use
 	for (boolean bEarlyUse : {FALSE, TRUE})
 	{
@@ -220,12 +272,13 @@ int main ()
 		assert (Within (First) == Temperature);
 		assert (Within (Second) == ArmClock);
 	}
+#endif
 
-	// a request the firmware refuses leaves the buffer to the next core
+	// a request the firmware refuses leaves the buffer to the next caller
 	Reset (false, true, TASK_LEVEL);
 	auto Refused = std::async (std::launch::async, AskTemperature, 0U, (unsigned) TASK_LEVEL, FALSE);
 	assert (Within (Refused) == 0);
-	auto Next = std::async (std::launch::async, AskArmClock, 1U, (unsigned) TASK_LEVEL, FALSE);
+	auto Next = std::async (std::launch::async, AskArmClock, 0U, (unsigned) TASK_LEVEL, FALSE);
 	assert (Within (Next) == ArmClock);
 
 	// a call at IRQ_LEVEL on a core in no request is answered and logs nothing
@@ -250,6 +303,25 @@ int main ()
 		assert (CLogger::Get ()->m_nWritten == nBefore + 1);
 		assert (strstr (CLogger::Get ()->m_Last, "refused") != 0);
 	}
+
+	// a second FIQ right after the refused one's request ended is answered,
+	// and the refusal is still logged once, below FIQ_LEVEL
+	Reset (false, false, FIQ_LEVEL);
+	nBefore = CLogger::Get ()->m_nWritten;
+	auto TwoFIQs = std::async (std::launch::async, AskWithHooks, SecondFIQAfterTheRequest, nullptr);
+	assert (Within (TwoFIQs) == Temperature);
+	assert (s_nInterruptAnswer == ArmClock);
+	assert (CLogger::Get ()->m_nWritten == nBefore + 1);
+	assert (strstr (CLogger::Get ()->m_Last, "FIQ_LEVEL") != 0);
+
+	// an IRQ right after the request took the lock is refused, not left
+	// waiting for that lock
+	Reset (false, false, TASK_LEVEL);
+	nBefore = CLogger::Get ()->m_nWritten;
+	auto AfterLock = std::async (std::launch::async, AskWithHooks, nullptr, IRQAfterTheLock);
+	assert (Within (AfterLock) == Temperature);
+	assert (s_nInterruptAnswer == 0);
+	assert (CLogger::Get ()->m_nWritten == nBefore + 1);
 
 	printf ("Property tags passed\n");
 }

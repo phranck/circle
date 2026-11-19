@@ -22,8 +22,9 @@ with tempfile.TemporaryDirectory() as tmp:
     folder = Path(tmp)
     (folder / 'header.inc').write_text(without_includes('include/circle/bcmpropertytags.h'))
     (folder / 'source.inc').write_text(without_includes('lib/bcmpropertytags.cpp'))
-    exe = folder / 'test'
-    subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++17', '-Wall', '-Wextra', '-Werror',
-                    '-Wno-unused-parameter', '-pthread', '-I', tmp, str(here / 'test.cpp'), '-o', str(exe)],
-                   check=True)
-    subprocess.run([str(exe)], check=True, timeout=60)
+    for defines in (['-DARM_ALLOW_MULTI_CORE'], []):
+        exe = folder / 'test'
+        subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++17', '-Wall', '-Wextra', '-Werror',
+                        '-Wno-unused-parameter', '-pthread', *defines, '-I', tmp, str(here / 'test.cpp'),
+                        '-o', str(exe)], check=True)
+        subprocess.run([str(exe)], check=True, timeout=60)

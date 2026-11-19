@@ -314,8 +314,8 @@ PACKED;
 class CBcmPropertyTags
 {
 public:
-	// bEarlyUse changes nothing, because the spin locks do nothing before the
-	// other cores start (see GetTags())
+	// bEarlyUse changes nothing, because the spin locks for TASK_LEVEL taken
+	// here do nothing before the other cores start (see GetTags())
 	CBcmPropertyTags (boolean bEarlyUse = FALSE);
 	~CBcmPropertyTags (void);
 
