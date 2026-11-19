@@ -63,14 +63,16 @@ The cooperative non-preemptive scheduler is intended to allow multiple threads o
 operation on a single core. It cannot be used on more than one core at a time
 and should always run on core 0. A call of CScheduler::Yield() or of one of the
 sleep methods on a secondary core does not switch the task: Yield() returns at
-once and the sleep methods delay the calling core for the given time. These
-calls are counted (see CScheduler::GetSecondaryCoreCalls()) and the first one is
-logged with its core and its return address. A secondary core has no current
-task. Calling CScheduler::GetCurrentTask(), acquiring a CMutex, waiting for a
-CSynchronizationEvent or creating a CTask there is a system panic condition,
-which is logged with the core and the return address. Waiting for a
-CSynchronizationEvent is a panic condition there even if the event is already
-set. CSemaphore::Down() waits, and is a panic condition there, only while the
-count is 0. The methods of CScheduler and CTask not named here are not checked.
-Except for CScheduler::Get(), IsActive() and GetSecondaryCoreCalls() they have
-to be called on core 0 too.
+once and the sleep methods delay the calling core for the given time. A wait for
+a CSynchronizationEvent, which is already set, returns there as on core 0. These
+calls are counted (see CScheduler::GetSecondaryCoreCalls()), and the first call
+from each return address is logged with its core. A secondary core has no
+current task. Calling CScheduler::GetCurrentTask(), acquiring or releasing a
+CMutex, waiting for a CSynchronizationEvent, which is clear, creating a CTask or
+calling CTask::Terminate() there is a system panic condition, which is logged
+with the core and the return address of the call. CSemaphore::Down() and
+CTask::WaitForTermination() wait for an event, so they are a panic condition
+there only while the count is 0 or the task is running. The methods of
+CScheduler and CTask not named here are not checked. Except for
+CScheduler::Get(), IsActive() and GetSecondaryCoreCalls() they have to be called
+on core 0 too.
