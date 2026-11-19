@@ -22,6 +22,9 @@
 #include <circle/synchronize.h>
 #include <circle/bcm2835.h>
 #include <circle/memory.h>
+#include <circle/multicore.h>
+#include <circle/logger.h>
+#include <circle/debug.h>
 #include <circle/macros.h>
 #include <assert.h>
 
@@ -37,7 +40,36 @@ struct TPropertyBuffer
 }
 PACKED;
 
+static const char FromPropertyTags[] = "proptags";
+
 CSpinLock CBcmPropertyTags::s_SpinLock (TASK_LEVEL);
+
+// s_bInRequest[CurrentCore ()] is TRUE while GetTags() works on a request on
+// this core, from before it takes s_SpinLock until it has let it go.
+// s_pRefusedFromFIQ[CurrentCore ()] is the return address of the first call
+// from FIQ_LEVEL that GetTags() refused during that request, or 0.
+
+#ifdef ARM_ALLOW_MULTI_CORE
+
+static volatile boolean s_bInRequest[CORES] = {FALSE};
+static const void * volatile s_pRefusedFromFIQ[CORES] = {0};
+
+static unsigned CurrentCore (void)
+{
+	return CMultiCoreSupport::ThisCore ();
+}
+
+#else
+
+static volatile boolean s_bInRequest[1] = {FALSE};
+static const void * volatile s_pRefusedFromFIQ[1] = {0};
+
+static unsigned CurrentCore (void)
+{
+	return 0;
+}
+
+#endif
 
 CBcmPropertyTags::CBcmPropertyTags (boolean bEarlyUse)
 :	m_MailBox (BCM_MAILBOX_PROP_OUT)
@@ -58,7 +90,7 @@ boolean CBcmPropertyTags::GetTag (u32 nTagId, void *pTag, unsigned nTagSize, uns
 	pHeader->nValueBufSize = nTagSize - sizeof (TPropertyTag);
 	pHeader->nValueLength = nRequestParmSize & ~VALUE_LENGTH_RESPONSE;
 
-	if (!GetTags (pTag, nTagSize))
+	if (!GetTags (pTag, nTagSize, __builtin_return_address (0)))
 	{
 		return FALSE;
 	}
@@ -74,10 +106,46 @@ boolean CBcmPropertyTags::GetTag (u32 nTagId, void *pTag, unsigned nTagSize, uns
 
 boolean CBcmPropertyTags::GetTags (void *pTags, unsigned nTagsSize)
 {
+	return GetTags (pTags, nTagsSize, __builtin_return_address (0));
+}
+
+boolean CBcmPropertyTags::GetTags (void *pTags, unsigned nTagsSize, const void *pCaller)
+{
 	assert (pTags != 0);
 	assert (nTagsSize >= sizeof (TPropertyTagSimple));
 	unsigned nBufferSize = sizeof (TPropertyBuffer) + nTagsSize + sizeof (u32);
 	assert ((nBufferSize & 3) == 0);
+
+	// A call from an interrupt handler on a core that is in a request is
+	// refused. Once that request holds s_SpinLock, the call would wait for ever
+	// for it, and without ARM_ALLOW_MULTI_CORE it would overwrite the request
+	// it interrupted. The note is set before the lock is taken, because a call
+	// from an interrupt between taking the lock and setting the note would wait
+	// for ever, so a call is also refused while its core waits for the lock.
+	// The logger takes its spin lock at IRQ_LEVEL, so it cannot be used at
+	// FIQ_LEVEL. A call refused there is noted, and the request it interrupted
+	// logs it once it is done.
+	unsigned nCore = CurrentCore ();
+	if (s_bInRequest[nCore])
+	{
+		if (CurrentExecutionLevel () < FIQ_LEVEL)
+		{
+			CLogger::Get ()->Write (FromPropertyTags, LogError,
+						"Call interrupting a request on core %u refused (return address 0x%lX)",
+						nCore, (unsigned long) (uintptr) pCaller);
+
+			DebugStackTrace ((const uintptr *) __builtin_frame_address (0), FromPropertyTags);
+		}
+		else if (s_pRefusedFromFIQ[nCore] == 0)
+		{
+			s_pRefusedFromFIQ[nCore] = pCaller;
+		}
+
+		return FALSE;
+	}
+
+	s_bInRequest[nCore] = TRUE;
+	CompilerBarrier ();
 
 	TPropertyBuffer *pBuffer =
 		(TPropertyBuffer *) CMemorySystem::GetCoherentPage (COHERENT_SLOT_PROP_MAILBOX);
@@ -115,6 +183,23 @@ boolean CBcmPropertyTags::GetTags (void *pTags, unsigned nTagsSize)
 	}
 
 	s_SpinLock.Release ();
+
+	CompilerBarrier ();
+	s_bInRequest[nCore] = FALSE;
+	CompilerBarrier ();
+
+	// No call is refused on this core from here on. A call refused at
+	// FIQ_LEVEL interrupted this request, which therefore runs below
+	// FIQ_LEVEL and can log it.
+	const void *pRefused = s_pRefusedFromFIQ[nCore];
+	if (pRefused != 0)
+	{
+		s_pRefusedFromFIQ[nCore] = 0;
+
+		CLogger::Get ()->Write (FromPropertyTags, LogError,
+					"Call from FIQ_LEVEL interrupting a request on core %u refused"
+					" (return address 0x%lX)", nCore, (unsigned long) (uintptr) pRefused);
+	}
 
 	return bResult;
 }

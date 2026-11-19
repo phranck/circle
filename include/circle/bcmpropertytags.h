@@ -319,6 +319,10 @@ public:
 	CBcmPropertyTags (boolean bEarlyUse = FALSE);
 	~CBcmPropertyTags (void);
 
+	// GetTag() and GetTags() must not be called from interrupt context (see
+	// doc/multicore.txt). A call from an interrupt handler on a core that is
+	// in a call of them returns FALSE and is logged with its return address,
+	// and with a stack trace at LogDebug unless it came from FIQ_LEVEL.
 	boolean GetTag (u32	  nTagId,			// tag identifier
 			void	 *pTag,				// pointer to tag struct
 			unsigned  nTagSize,			// size of tag struct
@@ -326,6 +330,10 @@ public:
 	
 	boolean GetTags (void	 *pTags,			// pointer to tags struct
 			 unsigned nTagsSize);			// size of tags struct
+
+private:
+	boolean GetTags (void *pTags, unsigned nTagsSize,
+			 const void *pCaller);			// return address to log
 
 private:
 	CBcmMailBox m_MailBox;
