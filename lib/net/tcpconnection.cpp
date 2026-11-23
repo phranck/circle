@@ -5,7 +5,6 @@
 // and with congestion control in RFC 5681.
 //
 // Non-implemented features:
-//	dynamic receive window
 //	URG flag and urgent pointer
 //	delayed ACK (not recommended any more)
 //	security/compartment
@@ -175,6 +174,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_bFINQueued (FALSE),
 	m_bFINSent (FALSE),
 	m_bFINReceived (FALSE),
+	m_bSendWindowUpdate (FALSE),
 	m_nRetransmissionCount (0),
 	m_bTimedOut (FALSE),
 	m_pTimer (CTimer::Get ()),
@@ -182,6 +182,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_nSND_UP (0),
 	m_nRCV_NXT (0),
 	m_nRCV_WND (s_nReceiveWindow),
+	m_nRCV_BUFF (s_nReceiveWindow),
 	m_nIRS (0),
 	m_nSND_MSS (536),	// RFC 1122 section 4.2.2.6
 	m_nIW (4 * m_nSND_MSS),
@@ -232,6 +233,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_bFINQueued (FALSE),
 	m_bFINSent (FALSE),
 	m_bFINReceived (FALSE),
+	m_bSendWindowUpdate (FALSE),
 	m_nRetransmissionCount (0),
 	m_bTimedOut (FALSE),
 	m_pTimer (CTimer::Get ()),
@@ -239,6 +241,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_nSND_UP (0),
 	m_nRCV_NXT (0),
 	m_nRCV_WND (s_nReceiveWindow),
+	m_nRCV_BUFF (s_nReceiveWindow),
 	m_nIRS (0),
 	m_nSND_MSS (536),	// RFC 1122 section 4.2.2.6
 	m_nIW (4 * m_nSND_MSS),
@@ -532,7 +535,24 @@ int CTCPConnection::Receive (CNetBuffer **ppNetBuffer, int nFlags)
 	size_t nLength = (*ppNetBuffer)->GetLength ();
 	assert (nLength <= FRAME_BUFFER_SIZE);
 
+	OpenReceiveWindow ();
+
 	return nLength;
+}
+
+void CTCPConnection::OpenReceiveWindow (void)
+{
+	size_t nQueued = m_RxQueue.GetBytesQueued ();
+	u32 nFree = nQueued < m_nRCV_BUFF ? m_nRCV_BUFF - nQueued : 0;
+
+	// RFC 1122 section 4.2.3.3: open the window only by a useful amount,
+	// to avoid the Silly Window Syndrome
+	if (   nFree > m_nRCV_WND
+	    && nFree - m_nRCV_WND >= min (m_nRCV_BUFF / 2, (u32) TCP_CONFIG_MSS))
+	{
+		m_nRCV_WND = nFree;
+		m_bSendWindowUpdate = TRUE;
+	}
 }
 
 int CTCPConnection::SendTo (CNetBuffer *pNetBuffer, int nFlags,
@@ -609,6 +629,19 @@ void CTCPConnection::Process (void)
 		m_Event.Set ();
 		m_TxEvent.Set ();
 		return;
+	}
+
+	if (m_bSendWindowUpdate)
+	{
+		m_bSendWindowUpdate = FALSE;
+
+		// the peer may wait for the window to open, while it is still sending
+		if (   m_State == TCPStateEstablished
+		    || m_State == TCPStateFinWait1
+		    || m_State == TCPStateFinWait2)
+		{
+			SendSegment (TCP_FLAG_ACK, m_nSND_NXT, m_nRCV_NXT);
+		}
 	}
 
 	switch (m_State)
@@ -1452,16 +1485,21 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 					m_RxQueue.Enqueue (pPacket);
 					pPacket = 0;
 
-					m_nRCV_NXT += nDataLength;
+					u32 nRCV_NXT = m_nRCV_NXT + nDataLength;
+					nRCV_NXT = m_ReassemblyQueue.Dequeue (nRCV_NXT);
 
-					m_nRCV_NXT = m_ReassemblyQueue.Dequeue (m_nRCV_NXT);
-
-					// m_nRCV_WND should be adjusted here (section 3.7)
+					// the window shrinks by the data the user has not taken yet,
+					// so its right edge stays where it was (section 3.7)
+					m_nRCV_WND -= min (nRCV_NXT - m_nRCV_NXT, m_nRCV_WND);
+					m_nRCV_NXT = nRCV_NXT;
 
 					// following ACK could be piggybacked with data
 					SendSegment (TCP_FLAG_ACK, m_nSND_NXT, m_nRCV_NXT);
 
+					// the window opens again only when the user takes the data,
+					// so the user is woken before the sender has to wait for it
 					if (   (nFlags & TCP_FLAG_PUSH)
+					    || m_nRCV_WND < m_nRCV_BUFF / 2
 					    || m_RxQueue.GetBytesQueued () >= TCP_CONFIG_RX_THRESHOLD)
 					{
 						m_Event.Set ();

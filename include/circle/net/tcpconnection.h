@@ -121,6 +121,8 @@ private:
 	void OnDuplicateAck (void);
 	void ResendSegment (void);
 
+	void OpenReceiveWindow (void);		// after the user has taken received data
+
 	boolean SendSegment (unsigned nFlags, u32 nSequenceNumber, u32 nAcknowledgmentNumber = 0,
 			     CNetBuffer *pData = 0);
 
@@ -155,6 +157,7 @@ private:
 	TTCPState m_StateAfterFIN;		//	and go to this state
 	volatile boolean m_bFINSent;		// FIN was sent, do not increase m_nSND_NXT any more
 	volatile boolean m_bFINReceived;	// FIN received, do not increase m_nRCV_NXT any more
+	volatile boolean m_bSendWindowUpdate;	// the receive window has opened, advertise it
 
 	volatile unsigned m_nRetransmissionCount;
 	volatile boolean m_bTimedOut;		// abort connection and close
@@ -178,6 +181,7 @@ private:
 	// Receive Sequence Variables
 	u32 m_nRCV_NXT;		// receive next
 	u32 m_nRCV_WND;		// receive window
+	u32 m_nRCV_BUFF;	// receive buffer size, the largest receive window
 	//u16 m_nRCV_UP;	// receive urgent pointer
 	u32 m_nIRS;		// initial receive sequence number
 
