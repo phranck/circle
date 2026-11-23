@@ -81,7 +81,10 @@ public:
 	int Connect (void);
 	int Accept (CIPAddress *pForeignIP, u16 *pForeignPort);
 	int Close (void);
-	
+
+	// closes only the sending, the connection stays for receiving until Close() (half close)
+	int ShutdownSend (void);
+
 	int Send (CNetBuffer *pData, int nFlags);
 	int Receive (CNetBuffer **ppBuffer, int nFlags);
 
@@ -157,6 +160,8 @@ private:
 	TTCPState m_StateAfterFIN;		//	and go to this state
 	volatile boolean m_bFINSent;		// FIN was sent, do not increase m_nSND_NXT any more
 	volatile boolean m_bFINReceived;	// FIN received, do not increase m_nRCV_NXT any more
+	volatile boolean m_bHalfClosed;		// ShutdownSend() was called, the user still receives,
+						// until Close()
 	volatile boolean m_bSendWindowUpdate;	// the receive window has opened, advertise it
 
 	volatile unsigned m_nRetransmissionCount;

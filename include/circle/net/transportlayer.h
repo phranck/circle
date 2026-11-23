@@ -52,6 +52,9 @@ public:
 
 	int Disconnect (int hConnection);
 
+	// TCP only, the connection stays for receiving until Disconnect()
+	int ShutdownSend (int hConnection);
+
 	int Send (CNetBuffer *pData, int nFlags, int hConnection);
 
 	int Receive (CNetBuffer **ppBuffer, int nFlags, int hConnection);

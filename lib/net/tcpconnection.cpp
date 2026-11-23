@@ -174,6 +174,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_bFINQueued (FALSE),
 	m_bFINSent (FALSE),
 	m_bFINReceived (FALSE),
+	m_bHalfClosed (FALSE),
 	m_bSendWindowUpdate (FALSE),
 	m_nRetransmissionCount (0),
 	m_bTimedOut (FALSE),
@@ -233,6 +234,7 @@ CTCPConnection::CTCPConnection (CNetConfig	*pNetConfig,
 	m_bFINQueued (FALSE),
 	m_bFINSent (FALSE),
 	m_bFINReceived (FALSE),
+	m_bHalfClosed (FALSE),
 	m_bSendWindowUpdate (FALSE),
 	m_nRetransmissionCount (0),
 	m_bTimedOut (FALSE),
@@ -367,6 +369,10 @@ int CTCPConnection::Accept (CIPAddress *pForeignIP, u16 *pForeignPort)
 
 int CTCPConnection::Close (void)
 {
+	// the user does not receive any more, the connection may terminate
+	boolean bWasHalfClosed = m_bHalfClosed;
+	m_bHalfClosed = FALSE;
+
 	switch (m_State)
 	{
 	case TCPStateClosed:
@@ -380,6 +386,10 @@ int CTCPConnection::Close (void)
 
 	case TCPStateSynReceived:
 	case TCPStateEstablished:
+		if (bWasHalfClosed)		// ShutdownSend() has queued the FIN already
+		{
+			break;
+		}
 		assert (!m_bFINQueued);
 		m_StateAfterFIN = TCPStateFinWait1;
 		m_nRetransmissionCount = MAX_RETRANSMISSIONS;
@@ -387,10 +397,20 @@ int CTCPConnection::Close (void)
 		break;
 		
 	case TCPStateFinWait1:
+		break;
+
 	case TCPStateFinWait2:
+		if (bWasHalfClosed)		// the FIN timeout waited for the user
+		{
+			StartTimer (TCPTimerTimeWait, HZ_FIN_TIMEOUT);
+		}
 		break;
 
 	case TCPStateCloseWait:
+		if (bWasHalfClosed)		// ShutdownSend() has queued the FIN already
+		{
+			break;
+		}
 		assert (!m_bFINQueued);
 		m_StateAfterFIN = TCPStateLastAck;	// RFC 1122 section 4.2.2.20 (a)
 		m_nRetransmissionCount = MAX_RETRANSMISSIONS;
@@ -411,6 +431,38 @@ int CTCPConnection::Close (void)
 	return 0;
 }
 
+int CTCPConnection::ShutdownSend (void)
+{
+	if (m_nErrno < 0)
+	{
+		return m_nErrno;
+	}
+
+	if (m_bHalfClosed)
+	{
+		return 0;
+	}
+
+	// not in SYN-RECEIVED, which a reset turns back into LISTEN for the next client
+	switch (m_State)
+	{
+	case TCPStateEstablished:
+	case TCPStateCloseWait:
+		break;
+
+	default:
+		return -NET_ERROR_NOT_CONNECTED;
+	}
+
+	int nResult = Close ();
+	if (nResult == 0)
+	{
+		m_bHalfClosed = TRUE;
+	}
+
+	return nResult;
+}
+
 int CTCPConnection::Send (CNetBuffer *pNetBuffer, int nFlags)
 {
 	if (nFlags & ~(MSG_DONTWAIT | MSG_MORE))
@@ -422,7 +474,12 @@ int CTCPConnection::Send (CNetBuffer *pNetBuffer, int nFlags)
 	{
 		return m_nErrno;
 	}
-	
+
+	if (m_bHalfClosed)		// ShutdownSend() has ended the sending
+	{
+		return -NET_ERROR_CONNECTION_RESET;
+	}
+
 	switch (m_State)
 	{
 	case TCPStateClosed:
@@ -493,8 +550,6 @@ int CTCPConnection::Receive (CNetBuffer **ppNetBuffer, int nFlags)
 		{
 		case TCPStateClosed:
 		case TCPStateListen:
-		case TCPStateFinWait1:
-		case TCPStateFinWait2:
 		case TCPStateCloseWait:
 		case TCPStateClosing:
 		case TCPStateLastAck:
@@ -504,6 +559,17 @@ int CTCPConnection::Receive (CNetBuffer **ppNetBuffer, int nFlags)
 		case TCPStateSynSent:
 		case TCPStateSynReceived:
 		case TCPStateEstablished:
+			break;
+
+		// after ShutdownSend() the remote host may still send, until its FIN
+		// (RFC 793 section 3.9)
+		case TCPStateFinWait1:
+		case TCPStateFinWait2:
+			if (   !m_bHalfClosed
+			    || m_bFINReceived)
+			{
+				return -NET_ERROR_CONNECTION_RESET;
+			}
 			break;
 		}
 
@@ -617,7 +683,8 @@ boolean CTCPConnection::IsConnected (void) const
 
 boolean CTCPConnection::IsTerminated (void) const
 {
-	return m_State == TCPStateClosed;
+	return    m_State == TCPStateClosed
+	       && !m_bHalfClosed;	// the user may not have taken the received data yet
 }
 
 void CTCPConnection::Process (void)
@@ -647,6 +714,15 @@ void CTCPConnection::Process (void)
 	switch (m_State)
 	{
 	case TCPStateClosed:
+		if (m_bHalfClosed)	// kept for the user, nothing is sent or timed any more
+		{
+			for (unsigned nTimer = TCPTimerUser; nTimer < TCPTimerUnknown; nTimer++)
+			{
+				StopTimer (nTimer);
+			}
+		}
+		return;
+
 	case TCPStateListen:
 	case TCPStateFinWait2:
 	case TCPStateTimeWait:
@@ -1402,7 +1478,10 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 					m_bFINQueued = FALSE;
 					StopTimer (TCPTimerRetransmission);
 					NEW_STATE (TCPStateFinWait2);
-					StartTimer (TCPTimerTimeWait, HZ_FIN_TIMEOUT);
+					if (!m_bHalfClosed)	// else Close() starts it
+					{
+						StartTimer (TCPTimerTimeWait, HZ_FIN_TIMEOUT);
+					}
 				}
 				else
 				{
@@ -1558,13 +1637,15 @@ int CTCPConnection::PacketReceived (CNetBuffer	*pPacket,
 			m_bFINReceived = TRUE;
 		}
 		SendSegment (TCP_FLAG_ACK, m_nSND_NXT, m_nRCV_NXT);
-		
+
+		// a waiting reader takes the end, after the data before
+		m_Event.Set ();
+
 		switch (m_State)
 		{
 		case TCPStateSynReceived:
 		case TCPStateEstablished:
 			NEW_STATE (TCPStateCloseWait);
-			m_Event.Set ();
 			break;
 
 		case TCPStateFinWait1:
@@ -1656,6 +1737,25 @@ int CTCPConnection::NotificationReceived (TICMPNotificationType  Type,
 CNetConnection::TStatus CTCPConnection::GetStatus (void) const
 {
 	TStatus Status = {FALSE, FALSE, FALSE, FALSE};
+
+	if (m_bHalfClosed)		// the user receives only
+	{
+		Status.bConnected = m_State != TCPStateClosed;
+
+		// Receive() does not wait
+		if (   !m_RxQueue.IsEmpty ()
+		    || m_bFINReceived
+		    || m_nErrno < 0
+		    || (   m_State != TCPStateSynReceived
+			&& m_State != TCPStateEstablished
+			&& m_State != TCPStateFinWait1
+			&& m_State != TCPStateFinWait2))
+		{
+			Status.bRxReady = TRUE;
+		}
+
+		return Status;
+	}
 
 	switch (m_State)
 	{

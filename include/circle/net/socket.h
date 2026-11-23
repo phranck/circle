@@ -108,6 +108,14 @@ public:
 	int ReceiveFrom (void *pBuffer, unsigned nLength, int nFlags,
 			 CIPAddress *pForeignIP, u16 *pForeignPort);
 
+	/// \brief End sending on a TCP connection, and go on receiving (half close)
+	/// \return Status (0 success, < 0 on error)
+	/// \note The remote host gets a FIN after the data queued before. Send() fails afterwards,\n
+	/// and Receive() returns what the remote host sends, until it closes its side too. Then\n
+	/// Receive() returns < 0. The connection stays until the socket is deleted, which closes it\n
+	/// completely. A second call does nothing.
+	int ShutdownSend (void);
+
 	/// \brief Set a timeout for Receive() and ReceiveFrom()
 	/// \param nMicroSeconds Timeout in us (or 0 to wait forever, default)
 	/// \return Status (0 success, < 0 on error)
@@ -158,6 +166,7 @@ private:
 	int m_nProtocol;
 	u16 m_nOwnPort;
 	int m_hConnection;
+	boolean m_bSendShutdown;	// ShutdownSend() has ended the sending already
 
 	unsigned m_nBackLog;
 	int m_hListenConnection[SOCKET_MAX_LISTEN_BACKLOG];

@@ -353,6 +353,23 @@ int CTransportLayer::Disconnect (int hConnection)
 	return ((CNetConnection *) m_pConnection[hConnection])->Close ();
 }
 
+int CTransportLayer::ShutdownSend (int hConnection)
+{
+	assert (hConnection >= 0);
+	if (   hConnection >= (int) m_pConnection.GetCount ()
+	    || m_pConnection[hConnection] == 0)
+	{
+		return -NET_ERROR_NOT_CONNECTED;
+	}
+
+	if (((CNetConnection *) m_pConnection[hConnection])->GetProtocol () != IPPROTO_TCP)
+	{
+		return -NET_ERROR_OPERATION_NOT_SUPPORTED;
+	}
+
+	return ((CTCPConnection *) m_pConnection[hConnection])->ShutdownSend ();
+}
+
 int CTransportLayer::Send (CNetBuffer *pNetBuffer, int nFlags, int hConnection)
 {
 	assert (hConnection >= 0);

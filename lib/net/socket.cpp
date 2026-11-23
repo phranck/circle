@@ -46,6 +46,7 @@ CSocket::CSocket (CNetSubSystem *pNetSubSystem, int nProtocol)
 	m_nProtocol (nProtocol),
 	m_nOwnPort (0),
 	m_hConnection (-1),
+	m_bSendShutdown (FALSE),
 	m_nBackLog (0),
 	m_bEnableBroadcast (FALSE)
 {
@@ -60,6 +61,7 @@ CSocket::CSocket (CSocket &rSocket, int hConnection)
 	m_nProtocol (rSocket.m_nProtocol),
 	m_nOwnPort (rSocket.m_nOwnPort),
 	m_hConnection (hConnection),
+	m_bSendShutdown (FALSE),
 	m_nBackLog (0),
 	m_bEnableBroadcast (rSocket.m_bEnableBroadcast)
 {
@@ -462,6 +464,35 @@ int CSocket::ReceiveFrom (void *pBuffer, unsigned nLength, int nFlags,
 	}
 
 	delete pNetBuffer;
+
+	return nResult;
+}
+
+int CSocket::ShutdownSend (void)
+{
+	if (m_nProtocol != IPPROTO_TCP)
+	{
+		return -NET_ERROR_OPERATION_NOT_SUPPORTED;
+	}
+
+	if (m_hConnection < 0)
+	{
+		return -NET_ERROR_NOT_CONNECTED;
+	}
+
+	if (m_bSendShutdown)
+	{
+		return 0;
+	}
+
+	// closing a TCP connection ends only its sending, it receives until the remote host
+	// closes too (RFC 793 section 3.5)
+	assert (m_pTransportLayer != 0);
+	int nResult = m_pTransportLayer->ShutdownSend (m_hConnection);
+	if (nResult == 0)
+	{
+		m_bSendShutdown = TRUE;
+	}
 
 	return nResult;
 }
