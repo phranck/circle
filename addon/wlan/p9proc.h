@@ -60,6 +60,16 @@ extern struct up_t
 
 void p9proc_init (void);
 
+// Returns the number of yields in qlock(), qunlock(), canqlock() and tsleep()
+// with a handler other than return0(), after which the task can go on without
+// waiting for an interrupt or a delay; it wraps around
+unsigned p9proc_busy_yields (void);
+
+// Sets (bIdle != 0) or clears (bIdle == 0) that the driver polls the WLAN
+// chip for an interrupt, which is no exchange; the yields while it is set
+// are not counted by p9proc_busy_yields()
+void p9proc_idle (int bIdle);
+
 #ifdef __cplusplus
 }
 #endif

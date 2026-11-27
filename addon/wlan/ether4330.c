@@ -1277,12 +1277,17 @@ intwait(Ctlr *ctlr, int wait)
 	ulong ints, mbox;
 	int i;
 
-	if(waserror())
+	if(waserror()){
+		p9proc_idle(0);
 		return;
+	}
 	for(;;){
+		/* polling the chip for an interrupt is no exchange with it */
+		p9proc_idle(1);
 		sdiocardintr(wait);
 		sbwindow(ctlr->sdregs);
 		i = sdiord(Fn0, Intpend);
+		p9proc_idle(0);
 		if(i == 0){
 			//tsleep(&up->sleep, return0, 0, 10);
 			continue;

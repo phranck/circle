@@ -8,6 +8,35 @@
 
 #define SPINLOCK_SAVE_POWER
 
+// Number of yields after which the calling task can go on without waiting
+// for an interrupt or a delay (see p9proc_busy_yields())
+static unsigned s_nBusyYields = 0;
+
+// Set while the driver polls the WLAN chip for an interrupt (see p9proc_idle())
+static int s_bIdle = 0;
+
+// Gives the other tasks a turn, after which the caller can go on at once
+// unless the driver is idle
+static void busyyield (void)
+{
+	if (!s_bIdle)
+	{
+		s_nBusyYields++;
+	}
+
+	CScheduler::Get ()->Yield ();
+}
+
+unsigned p9proc_busy_yields (void)
+{
+	return s_nBusyYields;
+}
+
+void p9proc_idle (int bIdle)
+{
+	s_bIdle = bIdle;
+}
+
 #ifdef ARM_ALLOW_MULTI_CORE
 
 void lock (Lock *l)
@@ -98,7 +127,7 @@ void qlock (QLock *qlock)
 {
 	do
 	{
-		CScheduler::Get ()->Yield ();
+		busyyield ();
 	}
 	while (qlock->locked);
 
@@ -110,14 +139,14 @@ void qunlock (QLock *qlock)
 	assert (qlock->locked);
 	qlock->locked = 0;
 
-	CScheduler::Get ()->Yield ();
+	busyyield ();
 }
 
 int canqlock (QLock *qlock)
 {
 	if (qlock->locked)
 	{
-		CScheduler::Get ()->Yield ();
+		busyyield ();
 
 		return 0;
 	}
@@ -146,7 +175,15 @@ void tsleep (Rendez *rendez, sleephandler_t *handler, void *param, unsigned msec
 			break;
 		}
 
-		CScheduler::Get ()->Yield ();
+		// return0() makes a delay, any other handler polls a condition
+		if (handler == return0)
+		{
+			CScheduler::Get ()->Yield ();
+		}
+		else
+		{
+			busyyield ();
+		}
 	}
 	while ((*handler) (param) == 0);
 }

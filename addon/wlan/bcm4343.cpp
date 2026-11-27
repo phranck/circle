@@ -313,6 +313,11 @@ void CBcm4343Device::DumpStatus (void)
 	print (Buffer);
 }
 
+unsigned CBcm4343Device::GetBusyYields (void)
+{
+	return p9proc_busy_yields ();
+}
+
 void CBcm4343Device::FrameReceived (const void *pBuffer, unsigned nLength)
 {
 	assert (s_pThis != 0);

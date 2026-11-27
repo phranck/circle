@@ -85,6 +85,15 @@ public:
 
 	void DumpStatus (void);
 
+	/// \return Number of times the driver has given the other tasks a turn,
+	///	    after which it can go on without waiting for an interrupt or a delay
+	/// \note The number wraps around. While it grows, the driver is busy with
+	///	  an exchange with the WLAN chip, so a loop that waits for the next
+	///	  interrupt after each turn of the tasks (CScheduler::Yield()) can go
+	///	  on at once instead, and the exchange is not held up until the next
+	///	  timer tick.
+	static unsigned GetBusyYields (void);
+
 public:
 	static void FrameReceived (const void *pBuffer, unsigned nLength);
 	static void ScanResultReceived (const void *pBuffer, unsigned nLength);
