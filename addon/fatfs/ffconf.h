@@ -300,6 +300,22 @@
 /      lock control is independent of re-entrancy. */
 
 
+/* The build may override this option. */
+#ifndef FF_FS_LOCK_SHARED_OPENS
+#define FF_FS_LOCK_SHARED_OPENS	0
+#endif
+/* The option FF_FS_LOCK_SHARED_OPENS selects how the file lock treats several
+/  opens of one object. It has no effect when FF_FS_LOCK is 0.
+/
+/  0:  An object open in write mode cannot be opened again, and an object open
+/      in read mode cannot be opened in write mode.
+/  1:  Opens of an object never reject each other, in read and write mode alike,
+/      so that a file which is kept open for appending can still be read. Only
+/      the removal and the renaming of an open object are rejected. The
+/      application program must keep writes from several opens of one file
+/      apart, and should not truncate a file that is open elsewhere. */
+
+
 #define FF_FS_REENTRANT	1
 #define FF_FS_TIMEOUT	1000
 /* The option FF_FS_REENTRANT switches the re-entrancy (thread safe) of the FatFs

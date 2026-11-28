@@ -969,8 +969,13 @@ static FRESULT chk_share (	/* Check if the file can be accessed */
 		return (!be && acc != 2) ? FR_TOO_MANY_OPEN_FILES : FR_OK;	/* Is there a blank entry for new object? */
 	}
 
+#if FF_FS_LOCK_SHARED_OPENS
+	/* The object was opened. Opens share it, so reject only delete and rename */
+	return (acc == 2) ? FR_LOCKED : FR_OK;
+#else
 	/* The object was opened. Reject any open against writing file and all write mode open */
 	return (acc != 0 || Files[i].ctr == 0x100) ? FR_LOCKED : FR_OK;
+#endif
 }
 
 
@@ -1006,9 +1011,14 @@ static UINT inc_share (	/* Increment object open counter and returns its index (
 		Files[i].ctr = 0;
 	}
 
+#if FF_FS_LOCK_SHARED_OPENS
+	(void)acc;
+	Files[i].ctr++;	/* Count every open, read or write mode alike */
+#else
 	if (acc >= 1 && Files[i].ctr) return 0;	/* Access violation (int err) */
 
 	Files[i].ctr = acc ? 0x100 : Files[i].ctr + 1;	/* Set semaphore value */
+#endif
 
 	return i + 1;	/* Index number origin from 1 */
 }
@@ -1024,7 +1034,9 @@ static FRESULT dec_share (	/* Decrement object open counter */
 
 	if (--i < FF_FS_LOCK) {	/* Index number origin from 0 */
 		n = Files[i].ctr;
+#if !FF_FS_LOCK_SHARED_OPENS
 		if (n == 0x100) n = 0;	/* If write mode open, delete the object semaphore */
+#endif
 		if (n > 0) n--;			/* Decrement read mode open count */
 		Files[i].ctr = n;
 		if (n == 0) {			/* Delete the object semaphore if open count becomes zero */
