@@ -556,8 +556,11 @@ void CUSBStandardHub::HandlePortStatusChange (void)
 			REQUEST_IN | REQUEST_CLASS | REQUEST_TO_OTHER,
 			GET_STATUS, 0, nPort+1, m_pStatus[nPort], 4) != 4)
 		{
-			CLogger::Get ()->Write (FromHub, LogPanic,
-						"Cannot get port status (port %u)", nPort+1);
+			// The hub reports a change bit again until it has been cleared.
+			GetDevice ()->LogWrite (LogError, "Cannot get port status (port %u)",
+						nPort+1);
+
+			continue;
 		}
 
 		u16 usChangeStatus = m_pStatus[nPort]->wChangeStatus;
@@ -574,7 +577,7 @@ void CUSBStandardHub::HandlePortStatusChange (void)
 				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
 				CLEAR_FEATURE, C_PORT_ENABLE, nPort+1, 0, 0) < 0)
 			{
-				CLogger::Get ()->Write (FromHub, LogPanic,
+				GetDevice ()->LogWrite (LogError,
 							"Cannot clear C_PORT_ENABLE (port %u)",
 							nPort+1);
 			}
@@ -586,7 +589,7 @@ void CUSBStandardHub::HandlePortStatusChange (void)
 				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
 				CLEAR_FEATURE, C_PORT_RESET, nPort+1, 0, 0) < 0)
 			{
-				CLogger::Get ()->Write (FromHub, LogPanic,
+				GetDevice ()->LogWrite (LogError,
 							"Cannot clear C_PORT_RESET (port %u)",
 							nPort+1);
 			}
@@ -598,7 +601,7 @@ void CUSBStandardHub::HandlePortStatusChange (void)
 				REQUEST_OUT | REQUEST_CLASS | REQUEST_TO_OTHER,
 				CLEAR_FEATURE, C_PORT_CONNECTION, nPort+1, 0, 0) < 0)
 			{
-				CLogger::Get ()->Write (FromHub, LogPanic,
+				GetDevice ()->LogWrite (LogError,
 							"Cannot clear C_PORT_CONNECTION (port %u)",
 							nPort+1);
 			}
